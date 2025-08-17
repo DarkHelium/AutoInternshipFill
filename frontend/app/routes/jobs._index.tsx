@@ -1,10 +1,13 @@
 import { redirect } from "@remix-run/node";
 import { Form, useLoaderData, useNavigation } from "react-router";
-import { API } from "../utils/api.client";
 import type { Job } from "../utils/types";
 
+const BACKEND = process.env.BACKEND_URL ?? "http://localhost:8000";
+
 export async function loader() {
-  const jobs = await API.listJobs();
+  const res = await fetch(`${BACKEND}/jobs`);
+  if (!res.ok) throw new Response("Failed to load jobs", { status: res.status });
+  const jobs = await res.json();
   return Response.json({ jobs });
 }
 
@@ -15,11 +18,13 @@ export async function action({ request }: { request: Request }) {
   const profileId = "default";
 
   if (intent === "tailor") {
-    await API.tailor(jobId, profileId);
+    await fetch(`${BACKEND}/jobs/${jobId}/tailor?profileId=${profileId}`, { method: "POST" });
     return redirect(`/jobs/${jobId}`);
   }
   if (intent === "apply") {
-    const { runId } = await API.apply(jobId, profileId);
+    const out = await fetch(`${BACKEND}/jobs/${jobId}/apply?profileId=${profileId}`, { method: "POST" })
+      .then(r => r.json());
+    const { runId } = out;
     return redirect(`/runs/${runId}`);
   }
   return Response.json({ ok: true });
@@ -32,9 +37,9 @@ export default function JobsIndex() {
   return (
     <div className="space-y-4">
       <h2 className="text-xl font-medium">Open Internship Postings</h2>
-      <div className="overflow-hidden rounded-xl border bg-white">
+      <div className="overflow-hidden rounded-xl border bg-white dark:border-gray-700 dark:bg-gray-800">
         <table className="w-full text-sm">
-          <thead className="bg-gray-100 text-left">
+          <thead className="bg-gray-100 text-left dark:bg-gray-700">
             <tr>
               <th className="p-3">Company</th>
               <th className="p-3">Role</th>
@@ -46,10 +51,10 @@ export default function JobsIndex() {
           </thead>
           <tbody>
             {jobs.map((j: Job) => (
-              <tr key={j.id} className="border-t">
+              <tr key={j.id} className="border-t dark:border-gray-700">
                 <td className="p-3">{j.company}</td>
                 <td className="p-3">
-                  <a className="font-medium underline" href={`/jobs/${j.id}`}>{j.role}</a>
+                  <a className="font-medium underline text-indigo-700 dark:text-indigo-300" href={`/jobs/${j.id}`}>{j.role}</a>
                 </td>
                 <td className="p-3">{j.location ?? "-"}</td>
                 <td className="p-3">{j.datePosted?.slice(0,10) ?? "-"}</td>

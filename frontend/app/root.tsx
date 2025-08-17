@@ -31,13 +31,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className="min-h-full bg-gray-50 text-gray-900">
+      <body className="min-h-full bg-gray-50 text-gray-900 dark:bg-gray-900 dark:text-gray-100">
         <div className="mx-auto max-w-7xl p-6">
           <header className="mb-6 flex items-center justify-between">
             <h1 className="text-2xl font-semibold">Auto-Apply Dashboard</h1>
             <nav className="flex gap-4 text-sm">
-              <a href="/jobs" className="hover:underline">Jobs</a>
-              <a href="/profile" className="hover:underline">Profile</a>
+              <a href="/jobs" className="hover:underline text-indigo-700 dark:text-indigo-300">Jobs</a>
+              <a href="/profile" className="hover:underline text-indigo-700 dark:text-indigo-300">Profile</a>
             </nav>
           </header>
           <Outlet />
