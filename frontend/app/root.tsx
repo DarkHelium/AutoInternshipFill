@@ -7,10 +7,9 @@ import {
   ScrollRestoration,
 } from "react-router";
 
-import type { Route } from "./+types/root";
 import "./app.css";
 
-export const links: Route.LinksFunction = () => [
+export const links = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -25,17 +24,25 @@ export const links: Route.LinksFunction = () => [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className="h-full">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
       </head>
-      <body>
-        {children}
-        <ScrollRestoration />
-        <Scripts />
+      <body className="min-h-full bg-gray-50 text-gray-900">
+        <div className="mx-auto max-w-7xl p-6">
+          <header className="mb-6 flex items-center justify-between">
+            <h1 className="text-2xl font-semibold">Auto-Apply Dashboard</h1>
+            <nav className="flex gap-4 text-sm">
+              <a href="/jobs" className="hover:underline">Jobs</a>
+              <a href="/profile" className="hover:underline">Profile</a>
+            </nav>
+          </header>
+          <Outlet />
+        </div>
+        <ScrollRestoration /><Scripts />
       </body>
     </html>
   );
@@ -45,7 +52,7 @@ export default function App() {
   return <Outlet />;
 }
 
-export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+export function ErrorBoundary({ error }: { error: any }) {
   let message = "Oops!";
   let details = "An unexpected error occurred.";
   let stack: string | undefined;
