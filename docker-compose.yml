@@ -1,0 +1,25 @@
+version: "3.9"
+services:
+  desktop:
+    build: ./desktop-runner
+    environment:
+      - DISPLAY=:20
+      - VNC_PASSWORD=secret
+      - NOVNC_PORT=6080
+      - VNC_PORT=5901
+    ports:
+      - "6080:6080"   # noVNC web UI
+    shm_size: "1gb"   # good for Chromium
+
+  backend:
+    build: ./backend
+    environment:
+      - FILES_DIR=/files
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+      - DESKTOP_NOVNC=http://localhost:6080/vnc.html?autoconnect=true
+    volumes:
+      - ./files:/files
+    ports:
+      - "8000:8000"
+    depends_on:
+      - desktop

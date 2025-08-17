@@ -48,4 +48,6 @@ class Run(Base):
     job_id = Column(String, index=True)
     ok = Column(Boolean, default=None)
     receipt_url = Column(String, nullable=True)
+    vnc_url = Column(String, nullable=True)
+    display = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

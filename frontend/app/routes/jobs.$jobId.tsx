@@ -38,10 +38,13 @@ export default function JobDetail() {
             <button className="ml-2 rounded-md bg-gray-900 px-3 py-1.5 text-white" name="intent" value="upload-resume">Save</button>
           </Form>
 
-          <div className="mt-6">
+          <div className="mt-6 space-y-2">
             <Form method="post" action="/jobs">
               <input type="hidden" name="jobId" value={job.id} />
               <button className="rounded-md bg-indigo-600 px-3 py-1.5 text-white" name="intent" value="tailor">Tailor for this job</button>
+            </Form>
+            <Form method="post" action={`/runs/start-desktop?jobId=${job.id}`}>
+              <button className="rounded-md bg-gray-900 px-3 py-1.5 text-white">Tailor (Desktop)</button>
             </Form>
           </div>
         </div>

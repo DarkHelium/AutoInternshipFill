@@ -19,4 +19,13 @@ class RunBus:
         except asyncio.CancelledError:
             return
 
+# Gate control for approval workflow
+RUN_GATES = {}       # run_id -> asyncio.Event
+RUN_NOVNC = {}       # run_id -> noVNC URL
+
+def gate_for(run_id: str) -> asyncio.Event:
+    if run_id not in RUN_GATES:
+        RUN_GATES[run_id] = asyncio.Event()
+    return RUN_GATES[run_id]
+
 RUN_BUS = RunBus()

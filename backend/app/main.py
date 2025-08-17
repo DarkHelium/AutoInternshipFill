@@ -1,11 +1,13 @@
 import os, json, asyncio
 from typing import List, Optional
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
+from jinja2 import Environment, FileSystemLoader
+from weasyprint import HTML
 
 from .db import Base, engine, get_db
 from .models import Job, Run, Profile, TailorResult
@@ -13,8 +15,9 @@ from .schemas import JobOut, ProfileIn, ProfileOut, TailorResultOut
 from .ingest import fetch_readme, parse_jobs_from_readme
 from .ats import detect_ats
 from .tailor import extract_keywords, make_diff_html
-from .runners.run_manager import RUN_BUS
-from .runners.greenhouse import greenhouse_prefill
+from .runners.run_manager import RUN_BUS, gate_for
+from .runners.greenhouse import greenhouse_prefill, greenhouse_prefill_headed
+from .runners.desktop_tailor import desktop_tailor_run
 
 load_dotenv()
 app = FastAPI(title="Auto Apply Backend")
@@ -29,6 +32,14 @@ os.makedirs(files_dir, exist_ok=True)
 app.mount("/files", StaticFiles(directory=files_dir), name="files")
 
 Base.metadata.create_all(bind=engine)
+
+# Initialize Jinja2 environment for PDF rendering
+env = Environment(loader=FileSystemLoader("./templates"))
+resume_tpl = env.get_template("resume.html")
+
+def render_pdf_from_json(resume_json: dict, out_path: str):
+    html = resume_tpl.render(r=resume_json)
+    HTML(string=html, base_url=".").write_pdf(out_path)
 
 @app.get("/health")
 def health():
@@ -112,19 +123,25 @@ async def apply(job_id: str, profileId: str = "default", db: Session = Depends(g
     j = db.query(Job).get(job_id)
     if not j: raise HTTPException(404, "job not found")
 
-    run = Run(job_id=job_id)
+    # Set VNC URL from environment
+    vnc_url = os.getenv("DESKTOP_NOVNC", "http://localhost:6080/vnc.html?autoconnect=true")
+    
+    run = Run(job_id=job_id, vnc_url=vnc_url, display=":20")
     db.add(run); db.commit()
     run_id = run.id
+
+    # Emit VNC URL immediately so UI can show iframe
+    await RUN_BUS.emit(run_id, json.dumps({"type":"vnc","url":vnc_url}))
 
     # Background task: pick ATS
     async def runner():
         try:
             await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"info","message":f"ATS={j.ats}"}))
             if j.ats == "greenhouse":
-                await greenhouse_prefill(run_id, j.apply_url, files_dir)
+                await greenhouse_prefill_headed(run_id, j.apply_url, files_dir)
             else:
                 await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"warn","message":"ATS not implemented; opening page"}))
-                await greenhouse_prefill(run_id, j.apply_url, files_dir)  # still open + screenshot
+                await greenhouse_prefill_headed(run_id, j.apply_url, files_dir)  # still open + screenshot
             run.ok = True
         except Exception as e:
             await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"error","message":str(e)}))
@@ -135,6 +152,48 @@ async def apply(job_id: str, profileId: str = "default", db: Session = Depends(g
 
     asyncio.create_task(runner())
     return {"runId": run_id}
+
+# Continue endpoint for approval gate
+@app.post("/runs/{run_id}/continue")
+async def continue_run(run_id: str):
+    ev = gate_for(run_id)
+    ev.set()
+    return {"ok": True}
+
+# Desktop tailor endpoints
+@app.post("/jobs/{job_id}/tailor/desktop/start")
+async def start_desktop_tailor(job_id: str, db: Session = Depends(get_db)):
+    j = db.query(Job).get(job_id)
+    if not j: raise HTTPException(404, "job not found")
+    run = Run(job_id=job_id); db.add(run); db.commit()
+
+    # Emit noVNC URL early so Remix can show the desktop immediately
+    vnc_url = os.getenv("DESKTOP_NOVNC", "http://localhost:6080/vnc.html?autoconnect=true")
+    await RUN_BUS.emit(run.id, json.dumps({"type":"vnc","url":vnc_url}))
+
+    asyncio.create_task(desktop_tailor_run(run.id, j.apply_url))
+    return {"runId": run.id, "vncUrl": vnc_url}
+
+@app.post("/jobs/{job_id}/tailor/import-json")
+def import_tailored_json(job_id: str,
+                         body: dict = Body(...),  # expects {"keywords":[...], "resume":{...}}
+                         db: Session = Depends(get_db)):
+    j = db.query(Job).get(job_id)
+    if not j: raise HTTPException(404, "job not found")
+
+    # validate minimal structure
+    if "resume" not in body or "keywords" not in body:
+        raise HTTPException(400, "Expected keys: keywords[], resume{}")
+
+    # render PDF
+    os.makedirs(files_dir, exist_ok=True)
+    out_path = os.path.join(files_dir, f"resume_tailored_{job_id}.pdf")
+    render_pdf_from_json(body["resume"], out_path)
+
+    tr = TailorResult(job_id=job_id, keywords=body["keywords"], diff_html=None,
+                      pdf_url=f"/files/{os.path.basename(out_path)}")
+    db.add(tr); j.status="tailored"; db.commit()
+    return {"pdfUrl": tr.pdf_url, "keywords": tr.keywords}
 
 # SSE events
 @app.get("/runs/{run_id}/events")
