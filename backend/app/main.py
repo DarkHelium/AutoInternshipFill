@@ -1,13 +1,22 @@
 import os, json, asyncio
 from typing import List, Optional
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Body
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
+# WeasyPrint is optional at import time; server should still boot without it
+try:
+    from weasyprint import HTML  # type: ignore
+except Exception:  # pragma: no cover - environment without weasyprint
+    HTML = None  # type: ignore
+# Optional libmagic for MIME detection; fallback to simple PDF signature check
+try:
+    import magic  # type: ignore
+except Exception:  # libmagic may be missing on some systems
+    magic = None  # type: ignore
 
 from .db import Base, engine, get_db
 from .models import Job, Run, Profile, TailorResult
@@ -39,7 +48,44 @@ resume_tpl = env.get_template("resume.html")
 
 def render_pdf_from_json(resume_json: dict, out_path: str):
     html = resume_tpl.render(r=resume_json)
+    if HTML is None:
+        # Defer failure until actually attempting to render a PDF
+        raise HTTPException(500, "WeasyPrint is not installed. Install 'weasyprint==62.3' to enable PDF rendering.")
     HTML(string=html, base_url=".").write_pdf(out_path)
+
+def validate_pdf_file(file_path: str) -> bool:
+    """Validate that the file is a PDF.
+
+    Prefer libmagic when available; otherwise fall back to checking the
+    standard PDF header signature to avoid hard failure when libmagic
+    isn't installed on the host.
+    """
+    # Prefer libmagic if present and working
+    if magic is not None:
+        try:
+            mime_type = magic.from_file(file_path, mime=True)
+            if mime_type == 'application/pdf':
+                return True
+        except Exception:
+            # fall through to header check
+            pass
+
+    # Fallback: check file starts with %PDF- and has EOF marker
+    try:
+        with open(file_path, 'rb') as f:
+            head = f.read(5)
+        if head != b"%PDF-":
+            return False
+        # Optionally check for EOF within last 1KB
+        with open(file_path, 'rb') as f:
+            try:
+                f.seek(-1024, os.SEEK_END)
+            except OSError:
+                f.seek(0)
+            tail = f.read()
+        return b"%%EOF" in tail
+    except Exception:
+        return False
 
 @app.get("/health")
 def health():
@@ -165,6 +211,25 @@ async def continue_run(run_id: str):
 async def start_desktop_tailor(job_id: str, db: Session = Depends(get_db)):
     j = db.query(Job).get(job_id)
     if not j: raise HTTPException(404, "job not found")
+    
+    # Guard: ensure we have a valid base resume PDF
+    profile = db.query(Profile).filter(Profile.id == "default").first()
+    if not profile or not profile.base_resume_url:
+        raise HTTPException(400, "No base resume uploaded. Please upload a PDF first.")
+    
+    # Extract filename from URL path and validate the PDF file exists and is valid
+    if profile.base_resume_url.startswith("/files/"):
+        filename = profile.base_resume_url.replace("/files/", "")
+        file_path = os.path.join(files_dir, filename)
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(400, "Base resume file not found. Please re-upload your PDF.")
+        
+        if not validate_pdf_file(file_path):
+            raise HTTPException(400, "Base resume is not a valid PDF. Please upload a valid PDF file.")
+    else:
+        raise HTTPException(400, "Invalid resume URL format. Please re-upload your PDF.")
+    
     run = Run(job_id=job_id); db.add(run); db.commit()
 
     # Emit noVNC URL early so Remix can show the desktop immediately
@@ -194,6 +259,87 @@ def import_tailored_json(job_id: str,
                       pdf_url=f"/files/{os.path.basename(out_path)}")
     db.add(tr); j.status="tailored"; db.commit()
     return {"pdfUrl": tr.pdf_url, "keywords": tr.keywords}
+
+# Upload endpoints for resume handling
+@app.post("/uploads/resumeUrl")
+def get_resume_upload_url():
+    """Generate a presigned URL for resume upload"""
+    import uuid
+    filename = f"resume_{uuid.uuid4().hex}.pdf"
+    upload_path = f"/files/{filename}"
+    public_url = f"/files/{filename}"
+    
+    return {
+        "uploadUrl": upload_path,
+        "publicUrl": public_url
+    }
+
+@app.put("/files/{filename}")
+async def upload_file(filename: str, request: Request):
+    """Handle file upload with PDF validation"""
+    os.makedirs(files_dir, exist_ok=True)
+    file_path = os.path.join(files_dir, filename)
+    
+    body = await request.body()
+    with open(file_path, "wb") as f:
+        f.write(body)
+    
+    # Validate it's actually a PDF
+    if not validate_pdf_file(file_path):
+        os.remove(file_path)  # Clean up invalid file
+        raise HTTPException(400, "File is not a valid PDF")
+    
+    return {"ok": True}
+
+# Profile endpoints
+@app.get("/profile")
+def get_profile(db: Session = Depends(get_db)):
+    """Get applicant profile"""
+    p = db.query(Profile).filter(Profile.id == "default").first()
+    if not p:
+        p = Profile(id="default", name="", email="")
+        db.add(p)
+        db.commit()
+    
+    return {
+        "name": p.name or "",
+        "email": p.email or "",
+        "phone": p.phone or "",
+        "school": p.school or "",
+        "gradDate": p.grad_date or "",
+        "workAuth": p.work_auth or {"usCitizen": False, "sponsorship": False},
+        "links": p.links or {"github": "", "portfolio": "", "linkedin": ""},
+        "skills": p.skills or [],
+        "answers": p.answers or {},
+        "base_resume_url": p.base_resume_url or ""
+    }
+
+@app.put("/profile")
+def update_profile(profile_data: dict = Body(...), db: Session = Depends(get_db)):
+    """Update applicant profile"""
+    p = db.query(Profile).filter(Profile.id == "default").first()
+    if not p:
+        p = Profile(id="default")
+        db.add(p)
+    
+    p.name = profile_data.get("name", "")
+    p.email = profile_data.get("email", "")
+    db.commit()
+    
+    return {"ok": True}
+
+@app.put("/profile/base-resume")
+def set_base_resume(body: dict = Body(...), db: Session = Depends(get_db)):
+    """Set the base resume URL"""
+    p = db.query(Profile).filter(Profile.id == "default").first()
+    if not p:
+        p = Profile(id="default", name="", email="")
+        db.add(p)
+    
+    p.base_resume_url = body.get("url", "")
+    db.commit()
+    
+    return {"ok": True}
 
 # SSE events
 @app.get("/runs/{run_id}/events")
