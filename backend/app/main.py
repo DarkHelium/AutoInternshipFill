@@ -31,10 +31,18 @@ from .runners.desktop_tailor import desktop_tailor_run
 load_dotenv()
 app = FastAPI(title="Auto Apply Backend")
 
-origins = [o.strip() for o in (os.getenv("CORS_ORIGINS") or "").split(",") if o.strip()]
-if origins:
-    app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True,
-                       allow_methods=["*"], allow_headers=["*"])
+origins_env = os.getenv("CORS_ORIGINS")
+origins = [o.strip() for o in (origins_env or "").split(",") if o.strip()]
+if not origins:
+    # Sensible default for local dev
+    origins = ["http://localhost:5173"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 files_dir = os.getenv("FILES_DIR", "./files")
 os.makedirs(files_dir, exist_ok=True)
@@ -91,9 +99,7 @@ def validate_pdf_file(file_path: str) -> bool:
 def health():
     return {"ok": True}
 
-# ----- Ingest -----
-@app.post("/admin/ingest")
-def ingest(db: Session = Depends(get_db)):
+def _ingest_into_db(db: Session) -> int:
     owner = os.getenv("GITHUB_OWNER", "vanshb03")
     repo = os.getenv("GITHUB_REPO", "Summer2026-Internships")
     branch = os.getenv("GITHUB_BRANCH", "dev")
@@ -103,18 +109,31 @@ def ingest(db: Session = Depends(get_db)):
     rows = parse_jobs_from_readme(md)
     count = 0
     for r in rows:
-        exists = db.query(Job).filter(Job.company==r["company"], Job.role==r["role"], Job.apply_url==r["apply_url"]).first()
-        if exists: continue
+        exists = db.query(Job).filter(
+            Job.company==r["company"], Job.role==r["role"], Job.apply_url==r["apply_url"]
+        ).first()
+        if exists:
+            continue
         j = Job(company=r["company"], role=r["role"], location=r["location"],
                 apply_url=r["apply_url"], date_posted=r["date_posted"],
                 ats=detect_ats(r["apply_url"]), raw_line=r["raw_line"])
         db.add(j); count += 1
     db.commit()
-    return {"added": count, "total": db.query(Job).count()}
+    return count
+
+def _ensure_jobs_seeded(db: Session):
+    if db.query(Job).count() == 0:
+        _ingest_into_db(db)
+
+@app.post("/admin/ingest")
+def ingest(db: Session = Depends(get_db)):
+    added = _ingest_into_db(db)
+    return {"added": added, "total": db.query(Job).count()}
 
 # ----- Jobs -----
 @app.get("/jobs", response_model=List[JobOut])
 def list_jobs(db: Session = Depends(get_db)):
+    _ensure_jobs_seeded(db)
     jobs = db.query(Job).order_by(Job.date_posted.desc().nullslast()).all()
     return [JobOut(id=j.id, company=j.company, role=j.role, location=j.location,
                    apply_url=j.apply_url, date_posted=j.date_posted, ats=j.ats, status=j.status)
@@ -266,7 +285,9 @@ def get_resume_upload_url():
     """Generate a presigned URL for resume upload"""
     import uuid
     filename = f"resume_{uuid.uuid4().hex}.pdf"
-    upload_path = f"/files/{filename}"
+    # Important: do NOT upload to the StaticFiles mount. Use a separate API path
+    # StaticFiles mounted at /files will swallow PUTs otherwise.
+    upload_path = f"/upload/{filename}"
     public_url = f"/files/{filename}"
     
     return {
@@ -274,9 +295,9 @@ def get_resume_upload_url():
         "publicUrl": public_url
     }
 
-@app.put("/files/{filename}")
+@app.put("/upload/{filename}")
 async def upload_file(filename: str, request: Request):
-    """Handle file upload with PDF validation"""
+    """Handle file upload with PDF validation. Writes into files_dir."""
     os.makedirs(files_dir, exist_ok=True)
     file_path = os.path.join(files_dir, filename)
     
