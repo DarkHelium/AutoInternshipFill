@@ -8,6 +8,7 @@ import {
 } from "react-router";
 
 import "./app.css";
+import { Toaster } from "sonner";
 
 export const links = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -42,6 +43,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </header>
           <Outlet />
         </div>
+        <Toaster richColors position="top-right" closeButton theme="system" />
         <ScrollRestoration /><Scripts />
       </body>
     </html>

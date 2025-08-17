@@ -316,17 +316,44 @@ def get_profile(db: Session = Depends(get_db)):
 
 @app.put("/profile")
 def update_profile(profile_data: dict = Body(...), db: Session = Depends(get_db)):
-    """Update applicant profile"""
+    """Update applicant profile (persist all recognized fields)."""
     p = db.query(Profile).filter(Profile.id == "default").first()
     if not p:
         p = Profile(id="default")
         db.add(p)
-    
-    p.name = profile_data.get("name", "")
-    p.email = profile_data.get("email", "")
+
+    # Basic fields
+    p.name = profile_data.get("name", p.name or "")
+    p.email = profile_data.get("email", p.email or "")
+    p.phone = profile_data.get("phone", p.phone or "")
+    p.school = profile_data.get("school", p.school or "")
+    p.grad_date = profile_data.get("gradDate", p.grad_date or "")
+
+    # Structured fields
+    if "workAuth" in profile_data:
+        p.work_auth = profile_data.get("workAuth") or {}
+    if "links" in profile_data:
+        p.links = profile_data.get("links") or {}
+    if "skills" in profile_data:
+        p.skills = profile_data.get("skills") or []
+    if "answers" in profile_data:
+        p.answers = profile_data.get("answers") or {}
+
     db.commit()
-    
-    return {"ok": True}
+
+    # Return the updated profile in the same shape as GET /profile
+    return {
+        "name": p.name or "",
+        "email": p.email or "",
+        "phone": p.phone or "",
+        "school": p.school or "",
+        "gradDate": p.grad_date or "",
+        "workAuth": p.work_auth or {"usCitizen": False, "sponsorship": False},
+        "links": p.links or {"github": "", "portfolio": "", "linkedin": ""},
+        "skills": p.skills or [],
+        "answers": p.answers or {},
+        "base_resume_url": p.base_resume_url or "",
+    }
 
 @app.put("/profile/base-resume")
 def set_base_resume(body: dict = Body(...), db: Session = Depends(get_db)):
