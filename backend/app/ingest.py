@@ -42,6 +42,12 @@ def parse_jobs_from_readme(markdown: str) -> List[Dict]:
     link_rx = re.compile(r"\[(?:Apply|Application|Link)[^\]]*\]\((https?://[^\s)]+)\)", re.I)
     url_rx = re.compile(r"https?://[^\s)]+")
 
+    def clean(text: str) -> str:
+        try:
+            return BeautifulSoup(text, "lxml").get_text(" ", strip=True)
+        except Exception:
+            return re.sub(r"<[^>]+>", " ", text)
+
     lines = markdown.splitlines()
     in_table = False
     for raw in lines:
@@ -60,13 +66,13 @@ def parse_jobs_from_readme(markdown: str) -> List[Dict]:
         if '|' in line and in_table:
             parts = [p.strip() for p in line.strip('|').split('|')]
             if len(parts) >= 4:
-                company = parts[0]
-                role = parts[1]
-                location = parts[2] if len(parts) > 2 else ''
+                company = clean(parts[0])
+                role = clean(parts[1])
+                location = clean(parts[2]) if len(parts) > 2 else ''
                 link_cell = parts[3]
                 m = link_rx.search(link_cell) or url_rx.search(link_cell)
                 url = m.group(1) if m and m.re is link_rx else (m.group(0) if m else '')
-                date = parts[4] if len(parts) > 4 else ''
+                date = clean(parts[4]) if len(parts) > 4 else ''
                 if url:
                     jobs.append({
                         "company": company,
@@ -83,7 +89,7 @@ def parse_jobs_from_readme(markdown: str) -> List[Dict]:
         if m:
             url = m.group(1)
             # naive split by two+ spaces
-            cols = re.split(r"\s{2,}", line)
+            cols = re.split(r"\s{2,}", clean(line))
             if len(cols) >= 4:
                 company, role, location = cols[0], cols[1], cols[2]
                 date = cols[4] if len(cols) > 4 else ''

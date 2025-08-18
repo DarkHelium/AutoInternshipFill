@@ -22,6 +22,10 @@ export default function RunView() {
         // Handle special event types
         if (evt.type === "vnc") {
           setVncUrl(evt.url);
+          // Auto-open VNC URL in a new tab for full-screen control as requested
+          try {
+            if (evt.url) window.open(evt.url, "_blank");
+          } catch {}
         } else if (evt.type === "jd") {
           setJdText(evt.text);
         } else if (evt.type === "auth_gate") {
@@ -70,7 +74,7 @@ export default function RunView() {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
       {/* Auth Gate - Show prominently when auth is needed */}
       {authGate && (
-        <div className="col-span-full rounded-xl bg-amber-50 border border-amber-200 p-6">
+        <div className="col-span-full rounded-xl bg-amber-50 border border-amber-200 p-6 dark:bg-amber-900/30 dark:border-amber-700">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-amber-800">
@@ -81,7 +85,7 @@ export default function RunView() {
             </div>
             <button 
               onClick={markSignedIn}
-              className="bg-amber-600 hover:bg-amber-700 text-white px-4 py-2 rounded-lg font-medium"
+              className="bg-amber-600 text-white px-4 py-2 rounded-lg font-medium transition-colors hover:bg-amber-500 active:bg-amber-700"
             >
               I'm Signed In
             </button>
@@ -91,7 +95,7 @@ export default function RunView() {
 
       {/* VNC Desktop */}
       {vncUrl && (
-        <div className="rounded-xl bg-white p-4">
+        <div className="rounded-xl bg-white p-4 dark:bg-gray-800 dark:text-gray-100 dark:border dark:border-gray-700">
           <h2 className="mb-2 text-lg font-semibold">Desktop (VNC)</h2>
           <iframe 
             src={vncUrl} 
@@ -102,25 +106,25 @@ export default function RunView() {
       )}
 
       {/* Live Logs */}
-      <div className="rounded-xl bg-white p-4">
+      <div className="rounded-xl bg-white p-4 dark:bg-gray-800 dark:text-gray-100 dark:border dark:border-gray-700">
         <h2 className="mb-2 text-lg font-semibold">Live Logs</h2>
-        <div className="h-[60vh] overflow-auto rounded border bg-gray-50 p-3 text-sm">
+        <div className="h-[60vh] overflow-auto rounded border bg-gray-50 p-3 text-sm dark:bg-gray-900 dark:border-gray-700">
           {events.map((e, i) => (
             <div key={i} className="mb-1">
               {e.type === "log" && <div>[{e.level}] {e.message}</div>}
               {e.type === "gate" && (
-                <div className="rounded border border-amber-400 bg-amber-50 p-2">
+                <div className="rounded border border-amber-400 bg-amber-50 p-2 dark:bg-amber-900/30 dark:border-amber-700">
                   Human action needed: {e.prompt}
                   <button 
                     onClick={continueRun}
-                    className="ml-2 rounded bg-amber-600 px-2 py-1 text-white text-xs"
+                    className="ml-2 rounded bg-amber-600 px-2 py-1 text-white text-xs transition-colors hover:bg-amber-500 active:bg-amber-700"
                   >
                     Mark Submitted
                   </button>
                 </div>
               )}
               {e.type === "done" && (
-                <div className={`rounded p-2 ${e.ok ? "bg-emerald-50" : "bg-rose-50"}`}>
+                <div className={`rounded p-2 ${e.ok ? "bg-emerald-50 dark:bg-emerald-900/30" : "bg-rose-50 dark:bg-rose-900/30"}`}>
                   {e.ok ? "Run completed ✅" : "Run failed ❌"}{e.receiptUrl && <> — <a className="underline" href={e.receiptUrl} target="_blank" rel="noreferrer">receipt</a></>}
                 </div>
               )}
@@ -139,7 +143,7 @@ export default function RunView() {
       </div>
 
       {/* Job Description + JSON Import */}
-      <div className="rounded-xl bg-white p-4 space-y-4">
+      <div className="rounded-xl bg-white p-4 space-y-4 dark:bg-gray-800 dark:text-gray-100 dark:border dark:border-gray-700">
         {/* Job Description Panel */}
         {jdText && (
           <div>
@@ -147,7 +151,7 @@ export default function RunView() {
               <h3 className="text-lg font-semibold">Job Description</h3>
               <button 
                 onClick={copyJD}
-                className="rounded bg-blue-600 px-2 py-1 text-white text-xs"
+                className="rounded bg-blue-600 px-2 py-1 text-white text-xs transition-colors hover:bg-blue-500 active:bg-blue-700"
               >
                 Copy JD
               </button>
@@ -161,7 +165,7 @@ export default function RunView() {
         {/* ChatGPT Prompt */}
         <div>
           <h3 className="text-sm font-semibold mb-2">ChatGPT Prompt</h3>
-          <div className="rounded border bg-gray-50 p-2 text-xs">
+          <div className="rounded border bg-gray-50 p-2 text-xs dark:bg-gray-900 dark:border-gray-700">
             <strong>Task:</strong> You are an expert ATS resume editor. You'll see a job description (JD) and my resume (attached).<br/>
             <strong>Output:</strong><br/>
             1. keywords: the top 5–10 ATS-friendly keywords/phrases from the JD.<br/>
@@ -186,11 +190,11 @@ export default function RunView() {
             value={jsonInput}
             onChange={(e) => setJsonInput(e.target.value)}
             placeholder='Paste JSON result from ChatGPT here: {"keywords":["..."], "resume":{...}}'
-            className="w-full h-32 rounded border p-2 text-xs font-mono"
+            className="w-full h-32 rounded border p-2 text-xs font-mono dark:bg-gray-900 dark:border-gray-700"
           />
           <button 
             onClick={renderJSON}
-            className="mt-2 rounded bg-emerald-600 px-3 py-1.5 text-white"
+            className="mt-2 rounded bg-emerald-600 px-3 py-1.5 text-white transition-colors hover:bg-emerald-500 active:bg-emerald-700"
             disabled={!jsonInput.trim()}
           >
             Render PDF
@@ -199,14 +203,14 @@ export default function RunView() {
 
         {/* Render Result */}
         {renderResult && (
-          <div className="rounded border border-emerald-200 bg-emerald-50 p-3">
+          <div className="rounded border border-emerald-200 bg-emerald-50 p-3 dark:bg-emerald-900/30 dark:border-emerald-800">
             <h3 className="text-sm font-semibold text-emerald-800">PDF Generated!</h3>
             <p className="text-xs text-emerald-700 mb-2">Keywords: {renderResult.keywords.join(", ")}</p>
             <a 
               href={`http://localhost:8000${renderResult.pdfUrl}`}
               target="_blank" 
               rel="noreferrer"
-              className="inline-block rounded bg-emerald-600 px-2 py-1 text-white text-xs"
+              className="inline-block rounded bg-emerald-600 px-2 py-1 text-white text-xs transition-colors hover:bg-emerald-500 active:bg-emerald-700"
             >
               Download PDF
             </a>

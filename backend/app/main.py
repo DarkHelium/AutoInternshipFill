@@ -27,6 +27,7 @@ from .tailor import extract_keywords, make_diff_html
 from .runners.run_manager import RUN_BUS, gate_for
 from .runners.greenhouse import greenhouse_prefill, greenhouse_prefill_headed
 from .runners.desktop_tailor import desktop_tailor_run
+from .runners.oneclick import oneclick_tailor_apply
 
 load_dotenv()
 app = FastAPI(title="Auto Apply Backend")
@@ -217,6 +218,17 @@ async def apply(job_id: str, profileId: str = "default", db: Session = Depends(g
 
     asyncio.create_task(runner())
     return {"runId": run_id}
+
+# One-click tailor + apply
+@app.post("/jobs/{job_id}/oneclick")
+async def oneclick(job_id: str, db: Session = Depends(get_db)):
+    j = db.query(Job).get(job_id)
+    if not j:
+        raise HTTPException(404, "job not found")
+    run = Run(job_id=job_id)
+    db.add(run); db.commit()
+    asyncio.create_task(oneclick_tailor_apply(run.id, j.role or "", j.apply_url, j.raw_line or j.role or "", files_dir))
+    return {"runId": run.id}
 
 # Continue endpoint for approval gate
 @app.post("/runs/{run_id}/continue")

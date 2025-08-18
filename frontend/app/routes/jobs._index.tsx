@@ -27,6 +27,12 @@ export async function action({ request }: { request: Request }) {
     const { runId } = out;
     return redirect(`/runs/${runId}`);
   }
+  if (intent === "oneclick") {
+    const out = await fetch(`${BACKEND}/jobs/${jobId}/oneclick`, { method: "POST" })
+      .then(r => r.json());
+    const { runId } = out;
+    return redirect(`/runs/${runId}`);
+  }
   return Response.json({ ok: true });
 }
 
@@ -74,8 +80,30 @@ export default function JobsIndex() {
                   <td className="p-3">
                     <Form method="post" className="flex gap-2">
                       <input type="hidden" name="jobId" value={j.id} />
-                      <button name="intent" value="tailor" className="rounded-lg bg-indigo-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={nav.state !== "idle"}>Tailor</button>
-                      <button name="intent" value="apply" className="rounded-lg bg-emerald-600 px-3 py-1.5 text-white disabled:opacity-50" disabled={nav.state !== "idle"}>Apply</button>
+                      <button
+                        name="intent"
+                        value="tailor"
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-white disabled:opacity-50 transition-colors hover:bg-indigo-500 active:bg-indigo-700"
+                        disabled={nav.state !== "idle"}
+                      >
+                        Tailor
+                      </button>
+                      <button
+                        name="intent"
+                        value="apply"
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 text-white disabled:opacity-50 transition-colors hover:bg-emerald-500 active:bg-emerald-700"
+                        disabled={nav.state !== "idle"}
+                      >
+                        Apply
+                      </button>
+                      <button
+                        name="intent"
+                        value="oneclick"
+                        className="rounded-lg bg-gray-900 px-3 py-1.5 text-white disabled:opacity-50 transition-colors hover:bg-gray-800 active:bg-black"
+                        disabled={nav.state !== "idle"}
+                      >
+                        Tailor+Apply
+                      </button>
                     </Form>
                   </td>
                 </tr>

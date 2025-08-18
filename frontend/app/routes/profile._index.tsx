@@ -81,11 +81,11 @@ export default function ProfileIndex() {
         <fetcher.Form method="post">
           <textarea name="profile" defaultValue={initial} rows={18}
             className="w-full rounded border p-2 font-mono text-sm dark:bg-gray-900 dark:border-gray-700" />
-          <button
-            type="submit"
-            className="mt-2 inline-flex items-center rounded-md bg-gray-900 px-3 py-1.5 text-white cursor-pointer transition-colors hover:bg-gray-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={fetcher.state !== "idle"}
-            aria-busy={fetcher.state !== "idle"}
+                      <button
+              type="submit"
+              className="mt-2 inline-flex items-center rounded-md bg-blue-600 px-3 py-1.5 text-white cursor-pointer transition-colors hover:bg-blue-500 active:bg-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={fetcher.state !== "idle"}
+              aria-busy={fetcher.state !== "idle"}
             aria-live="polite"
           >
             {fetcher.state !== "idle" ? "Saving…" : "Save"}
@@ -161,9 +161,9 @@ export default function ProfileIndex() {
             <span className="text-xs text-gray-600 dark:text-gray-300">{resumeMeta.name} • {resumeMeta.sizeKb} KB</span>
           )}
 
-          <button
-            className="inline-flex items-center rounded-md bg-gray-900 px-3 py-1.5 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-            disabled={!resumeVerified || uploading || !jobs || jobs.length === 0}
+                      <button
+              className="inline-flex items-center rounded-md bg-emerald-600 px-3 py-1.5 text-white cursor-pointer transition-all hover:bg-emerald-500 active:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!resumeVerified || uploading || !jobs || jobs.length === 0}
             onClick={async () => {
               try {
                 const targetJobId = jobs?.[0]?.id;
@@ -171,7 +171,13 @@ export default function ProfileIndex() {
                 const res = await fetch(`${BACKEND_BROWSER}/jobs/${targetJobId}/tailor/desktop/start`, { method: "POST" });
                 if (!res.ok) throw new Error("start failed");
                 const out = await res.json();
-                navigate(`/runs/${out.runId}`);
+                // Redirect user directly to the VNC desktop as requested
+                if (out?.vncUrl) {
+                  window.location.href = out.vncUrl;
+                } else {
+                  // Fallback: go to run logs page
+                  navigate(`/runs/${out.runId}`);
+                }
               } catch {
                 toast.error("Failed to start desktop run");
               }
