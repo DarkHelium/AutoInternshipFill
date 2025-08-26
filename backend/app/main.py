@@ -19,18 +19,19 @@ except Exception:  # libmagic may be missing on some systems
     magic = None  # type: ignore
 
 from .db import Base, engine, get_db
-from .models import Job, Run, Profile, TailorResult
-from .schemas import JobOut, ProfileIn, ProfileOut, TailorResultOut
+from .models import Job, Run, Profile, TailorResult, ApplicationOutcome, AIInteraction, ResumeVersion
+from .schemas import (
+    JobOut, ProfileIn, ProfileOut, TailorResultOut,
+    JobAnalysisRequest, JobAnalysisResponse, ResumeTailoringRequest, ResumeTailoringResponse,
+    ApplicationOutcomeUpdate, AIInteractionFeedback
+)
+from .ai_services import get_ai_service
 from .ingest import fetch_readme, parse_jobs_from_readme
 from .ats import detect_ats
 from .tailor import extract_keywords, make_diff_html
-from .runners.run_manager import RUN_BUS, gate_for
-from .runners.greenhouse import greenhouse_prefill, greenhouse_prefill_headed
-from .runners.desktop_tailor import desktop_tailor_run
-from .runners.oneclick import oneclick_tailor_apply
 
 load_dotenv()
-app = FastAPI(title="Auto Apply Backend")
+app = FastAPI(title="AI Career Co-pilot Backend")
 
 origins_env = os.getenv("CORS_ORIGINS")
 origins = [o.strip() for o in (origins_env or "").split(",") if o.strip()]
@@ -183,92 +184,39 @@ def tailor(job_id: str, profileId: str = "default", db: Session = Depends(get_db
 
     return TailorResultOut(jobId=job_id, keywords=kws, diffHtml=diff_html, pdfUrl=None)
 
-# Apply (launches a run + SSE logs)
+# Chrome Extension Apply - simplified for extension use
 @app.post("/jobs/{job_id}/apply")
 async def apply(job_id: str, profileId: str = "default", db: Session = Depends(get_db)):
+    """Mark job as applied - will be called by Chrome extension"""
     j = db.query(Job).get(job_id)
     if not j: raise HTTPException(404, "job not found")
 
-    # Set VNC URL from environment
-    vnc_url = os.getenv("DESKTOP_NOVNC", "http://localhost:6080/vnc.html?autoconnect=true")
+    j.status = "applied"
+    db.commit()
     
-    run = Run(job_id=job_id, vnc_url=vnc_url, display=":20")
-    db.add(run); db.commit()
-    run_id = run.id
+    return {"success": True, "message": "Job marked as applied"}
 
-    # Emit VNC URL immediately so UI can show iframe
-    await RUN_BUS.emit(run_id, json.dumps({"type":"vnc","url":vnc_url}))
-
-    # Background task: pick ATS
-    async def runner():
-        try:
-            await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"info","message":f"ATS={j.ats}"}))
-            if j.ats == "greenhouse":
-                await greenhouse_prefill_headed(run_id, j.apply_url, files_dir)
-            else:
-                await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"warn","message":"ATS not implemented; opening page"}))
-                await greenhouse_prefill_headed(run_id, j.apply_url, files_dir)  # still open + screenshot
-            run.ok = True
-        except Exception as e:
-            await RUN_BUS.emit(run_id, json.dumps({"type":"log","level":"error","message":str(e)}))
-            await RUN_BUS.emit(run_id, json.dumps({"type":"done","ok":False}))
-            run.ok = False
-        finally:
-            db.add(run); db.commit()
-
-    asyncio.create_task(runner())
-    return {"runId": run_id}
-
-# One-click tailor + apply
+# One-click AI tailor + apply for Chrome extension
 @app.post("/jobs/{job_id}/oneclick")
 async def oneclick(job_id: str, db: Session = Depends(get_db)):
+    """AI-powered one-click tailor and apply for Chrome extension"""
     j = db.query(Job).get(job_id)
     if not j:
         raise HTTPException(404, "job not found")
-    run = Run(job_id=job_id)
-    db.add(run); db.commit()
-    asyncio.create_task(oneclick_tailor_apply(run.id, j.role or "", j.apply_url, j.raw_line or j.role or "", files_dir))
-    return {"runId": run.id}
-
-# Continue endpoint for approval gate
-@app.post("/runs/{run_id}/continue")
-async def continue_run(run_id: str):
-    ev = gate_for(run_id)
-    ev.set()
-    return {"ok": True}
-
-# Desktop tailor endpoints
-@app.post("/jobs/{job_id}/tailor/desktop/start")
-async def start_desktop_tailor(job_id: str, db: Session = Depends(get_db)):
-    j = db.query(Job).get(job_id)
-    if not j: raise HTTPException(404, "job not found")
     
-    # Guard: ensure we have a valid base resume PDF
-    profile = db.query(Profile).filter(Profile.id == "default").first()
-    if not profile or not profile.base_resume_url:
-        raise HTTPException(400, "No base resume uploaded. Please upload a PDF first.")
-    
-    # Extract filename from URL path and validate the PDF file exists and is valid
-    if profile.base_resume_url.startswith("/files/"):
-        filename = profile.base_resume_url.replace("/files/", "")
-        file_path = os.path.join(files_dir, filename)
-        
-        if not os.path.exists(file_path):
-            raise HTTPException(400, "Base resume file not found. Please re-upload your PDF.")
-        
-        if not validate_pdf_file(file_path):
-            raise HTTPException(400, "Base resume is not a valid PDF. Please upload a valid PDF file.")
+    # Analyze job if not already done
+    if not j.job_description or not j.key_requirements:
+        # Would trigger AI analysis here
+        j.status = "needs_analysis"
     else:
-        raise HTTPException(400, "Invalid resume URL format. Please re-upload your PDF.")
+        j.status = "ready_to_apply"
     
-    run = Run(job_id=job_id); db.add(run); db.commit()
+    db.commit()
+    return {"jobId": j.id, "status": j.status, "message": "Ready for Chrome extension application"}
 
-    # Emit noVNC URL early so Remix can show the desktop immediately
-    vnc_url = os.getenv("DESKTOP_NOVNC", "http://localhost:6080/vnc.html?autoconnect=true")
-    await RUN_BUS.emit(run.id, json.dumps({"type":"vnc","url":vnc_url}))
+# Removed - no longer needed for Chrome extension
 
-    asyncio.create_task(desktop_tailor_run(run.id, j.apply_url))
-    return {"runId": run.id, "vncUrl": vnc_url}
+# Removed desktop tailor - replaced with AI API endpoints
 
 @app.post("/jobs/{job_id}/tailor/import-json")
 def import_tailored_json(job_id: str,
@@ -292,6 +240,40 @@ def import_tailored_json(job_id: str,
     return {"pdfUrl": tr.pdf_url, "keywords": tr.keywords}
 
 # Upload endpoints for resume handling
+@app.post("/upload-resume")
+async def upload_resume(file: UploadFile = File(...)):
+    """Upload resume file directly using multipart/form-data"""
+    if not file.filename:
+        raise HTTPException(400, "No file selected")
+    
+    # Validate file type
+    allowed_types = {'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'}
+    if file.content_type not in allowed_types:
+        raise HTTPException(400, "Invalid file type. Please upload PDF, DOC, or DOCX files only")
+    
+    # Generate unique filename
+    import uuid
+    ext = os.path.splitext(file.filename)[1]
+    filename = f"resume_{uuid.uuid4().hex}{ext}"
+    
+    # Save file
+    os.makedirs(files_dir, exist_ok=True)
+    file_path = os.path.join(files_dir, filename)
+    
+    try:
+        contents = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "publicUrl": f"/files/{filename}",
+            "message": "Resume uploaded successfully"
+        }
+    except Exception as e:
+        raise HTTPException(500, f"Upload failed: {str(e)}")
+
 @app.post("/uploads/resumeUrl")
 def get_resume_upload_url():
     """Generate a presigned URL for resume upload"""
@@ -401,15 +383,275 @@ def set_base_resume(body: dict = Body(...), db: Session = Depends(get_db)):
     
     return {"ok": True}
 
-# SSE events
-@app.get("/runs/{run_id}/events")
-async def run_events(run_id: str):
-    async def event_gen():
-        # send a hello event so UI shows immediately
-        yield b"data: {\"type\":\"log\",\"level\":\"info\",\"message\":\"connected\"}\n\n"
-        async for chunk in RUN_BUS.stream(run_id):
-            yield chunk
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+# Removed SSE events - not needed for Chrome extension
+
+# ----- AI Career Co-pilot Endpoints -----
+
+@app.post("/ai/analyze-job")
+async def analyze_job_description(request: JobAnalysisRequest, db: Session = Depends(get_db)):
+    """AI-powered job description analysis"""
+    try:
+        # Get or create default user profile so the endpoint never hard-fails
+        profile = db.query(Profile).get("default")
+        if not profile:
+            profile = Profile(id="default", name="", email="")
+            db.add(profile)
+            db.commit()
+        
+        # Get user's AI settings
+        ai_service = get_ai_service(
+            user_api_key=profile.ai_api_key,
+            model=profile.preferred_ai_model or "gpt-5"
+        )
+        
+        # Enhanced job scraping with Playwright if URL provided
+        job_description = request.job_description
+        job_details = {}
+        if not job_description and request.job_url:
+            try:
+                from .playwright_service import enhanced_job_scraping
+                job_details = await enhanced_job_scraping(request.job_url)
+                job_description = job_details.get('description', '')
+            except Exception as e:
+                # Fallback to basic scraping
+                try:
+                    import httpx
+                    from bs4 import BeautifulSoup
+                    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+                        response = await client.get(request.job_url)
+                    soup = BeautifulSoup(response.text, "lxml")
+                    content = soup.select_one("main, .content, #content, .job, article") or soup
+                    job_description = content.get_text(" ", strip=True)
+                    job_details = {'company': 'Unknown', 'title': 'Unknown'}
+                except Exception as fallback_error:
+                    raise HTTPException(400, f"Failed to scrape job description: {str(fallback_error)}")
+        
+        if not job_description:
+            raise HTTPException(400, "No job description provided")
+        
+        # Prepare user profile for AI analysis
+        user_profile = {
+            "experience_level": profile.experience_level,
+            "skills": profile.skills or [],
+            "target_roles": profile.target_roles or [],
+            "work_auth": profile.work_auth or {},
+            "education": profile.school,
+            "grad_date": profile.grad_date
+        }
+        
+        # Run AI analysis
+        analysis = await ai_service.analyze_job_description(
+            request.job_url, job_description, user_profile
+        )
+        
+        # Find or create job record
+        job = db.query(Job).filter(Job.apply_url == request.job_url).first()
+        if not job:
+            # Create new job record with enhanced scraped data and AI analysis
+            job = Job(
+                company=job_details.get("company", "Unknown"),
+                role=job_details.get("title", "Unknown"),
+                location=job_details.get("location"),
+                apply_url=request.job_url,
+                status="analyzing",
+                ats=job_details.get("ats", "unknown"),
+                job_description=job_description,
+                key_requirements=analysis.get("key_requirements", []),
+                salary_range=analysis.get("salary_range"),
+                remote_policy=analysis.get("remote_policy"),
+                difficulty_score=analysis.get("difficulty_score"),
+                match_score=analysis.get("match_score")
+            )
+            db.add(job)
+            db.commit()
+        else:
+            # Update existing job with enhanced data and AI analysis
+            job.company = job_details.get("company", job.company)
+            job.role = job_details.get("title", job.role)
+            job.location = job_details.get("location", job.location)
+            job.ats = job_details.get("ats", job.ats)
+            job.job_description = job_description
+            job.key_requirements = analysis.get("key_requirements", [])
+            job.salary_range = analysis.get("salary_range")
+            job.remote_policy = analysis.get("remote_policy")
+            job.difficulty_score = analysis.get("difficulty_score")
+            job.match_score = analysis.get("match_score")
+            job.status = "analyzed"
+            db.commit()
+        
+        return JobAnalysisResponse(
+            job_id=job.id,
+            key_requirements=analysis.get("key_requirements", []),
+            difficulty_score=analysis.get("difficulty_score", 0.5),
+            match_score=analysis.get("match_score", 0.5),
+            ai_analysis=analysis,
+            suggested_improvements=analysis.get("improvement_suggestions", [])
+        )
+        
+    except Exception as e:
+        raise HTTPException(500, f"AI analysis failed: {str(e)}")
+
+@app.post("/ai/tailor-resume")
+async def tailor_resume(request: ResumeTailoringRequest, db: Session = Depends(get_db)):
+    """AI-powered resume tailoring"""
+    try:
+        # Get job and user profile
+        job = db.query(Job).get(request.job_id)
+        if not job:
+            raise HTTPException(404, "Job not found")
+            
+        profile = db.query(Profile).get("default")
+        if not profile or not profile.base_resume_url:
+            raise HTTPException(400, "Please upload a base resume first")
+        
+        # Get AI service
+        ai_service = get_ai_service(
+            user_api_key=profile.ai_api_key,
+            model=profile.preferred_ai_model or "gpt-5"
+        )
+        
+        # Prepare job analysis for AI
+        job_analysis = {
+            "key_requirements": job.key_requirements or [],
+            "difficulty_score": job.difficulty_score or 0.5,
+            "match_score": job.match_score or 0.5,
+            "job_description": job.job_description or "",
+            "company": job.company,
+            "role": job.role
+        }
+        
+        # Get base resume content (simplified for now - would need PDF parsing)
+        base_resume = f"""
+        Name: {profile.name}
+        Email: {profile.email}
+        Phone: {profile.phone}
+        School: {profile.school}
+        Graduation: {profile.grad_date}
+        Skills: {', '.join(profile.skills or [])}
+        """
+        
+        # Combine user constraints
+        user_constraints = profile.career_constraints or {}
+        if request.user_constraints:
+            user_constraints.update(request.user_constraints)
+        
+        # Run AI tailoring
+        tailoring_result = await ai_service.tailor_resume(
+            job_analysis, base_resume, user_constraints
+        )
+        
+        # Store tailoring result
+        tailor_result = TailorResult(
+            job_id=request.job_id,
+            keywords=tailoring_result.get("keyword_integration", []),
+            ai_analysis=tailoring_result,
+            tailoring_strategy=tailoring_result.get("changes_explanation", ""),
+            ats_score=tailoring_result.get("ats_score", 0.0),
+            improvement_suggestions=tailoring_result.get("improvement_suggestions", [])
+        )
+        db.add(tailor_result)
+        
+        # Update job status
+        job.status = "tailored"
+        db.commit()
+        
+        return ResumeTailoringResponse(
+            tailored_resume=tailoring_result.get("tailored_resume", {}),
+            changes_explanation=tailoring_result.get("changes_explanation", ""),
+            ats_score=tailoring_result.get("ats_score", 0.0),
+            keyword_integration=tailoring_result.get("keyword_integration", [])
+        )
+        
+    except HTTPException as he:
+        # Propagate explicit HTTP errors (e.g., 400 when resume missing)
+        raise he
+    except Exception as e:
+        raise HTTPException(500, f"Resume tailoring failed: {str(e)}")
+
+@app.post("/ai/ats-preview")
+async def generate_ats_preview(job_id: str, db: Session = Depends(get_db)):
+    """Generate ATS preview of tailored resume"""
+    try:
+        # Get latest tailoring result for job
+        tailor_result = db.query(TailorResult).filter(
+            TailorResult.job_id == job_id
+        ).order_by(TailorResult.created_at.desc()).first()
+        
+        if not tailor_result or not tailor_result.ai_analysis:
+            raise HTTPException(404, "No tailored resume found for this job")
+        
+        profile = db.query(Profile).get("default")
+        ai_service = get_ai_service(
+            user_api_key=profile.ai_api_key if profile else None,
+            model=profile.preferred_ai_model if profile else "gpt-5"
+        )
+        
+        # Get tailored resume content
+        tailored_resume = tailor_result.ai_analysis.get("tailored_resume", {})
+        
+        # Generate ATS preview
+        ats_preview = await ai_service.generate_ats_preview(tailored_resume)
+        
+        return ats_preview
+        
+    except Exception as e:
+        raise HTTPException(500, f"ATS preview generation failed: {str(e)}")
+
+@app.get("/ai/ats-preview")
+async def generate_ats_preview_get(job_id: str, db: Session = Depends(get_db)):
+    """GET variant for ATS preview so extensions can open it in a new tab."""
+    return await generate_ats_preview(job_id, db)
+
+@app.post("/ai/track-outcome")
+async def track_application_outcome(outcome: ApplicationOutcomeUpdate, db: Session = Depends(get_db)):
+    """Track application outcome for learning"""
+    try:
+        # Find or create outcome record
+        existing = db.query(ApplicationOutcome).filter(
+            ApplicationOutcome.job_id == outcome.job_id
+        ).first()
+        
+        if existing:
+            existing.status = outcome.status
+            existing.outcome_date = outcome.outcome_date
+            existing.notes = outcome.notes
+            existing.feedback_received = outcome.feedback_received
+        else:
+            outcome_record = ApplicationOutcome(
+                job_id=outcome.job_id,
+                status=outcome.status,
+                outcome_date=outcome.outcome_date,
+                notes=outcome.notes,
+                feedback_received=outcome.feedback_received
+            )
+            db.add(outcome_record)
+        
+        # Update job status
+        job = db.query(Job).get(outcome.job_id)
+        if job:
+            job.status = outcome.status
+        
+        db.commit()
+        return {"success": True, "message": "Outcome tracked successfully"}
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to track outcome: {str(e)}")
+
+@app.post("/ai/feedback")
+async def submit_ai_feedback(feedback: AIInteractionFeedback, db: Session = Depends(get_db)):
+    """Submit feedback on AI interaction quality"""
+    try:
+        interaction = db.query(AIInteraction).get(feedback.interaction_id)
+        if not interaction:
+            raise HTTPException(404, "AI interaction not found")
+        
+        interaction.user_rating = feedback.user_rating
+        db.commit()
+        
+        return {"success": True, "message": "Feedback recorded"}
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to record feedback: {str(e)}")
 
 # ----- Profile -----
 @app.get("/profile", response_model=ProfileOut)
@@ -453,10 +695,4 @@ async def receive_put(token: str, body: bytes = File(default=None)):
         f.write(body if body is not None else b"")
     return {"ok": True}
 
-@app.put("/profile/base-resume")
-def set_base_resume(url: str, db: Session = Depends(get_db)):
-    p = db.query(Profile).get("default")
-    if not p: p = Profile(id="default")
-    p.base_resume_url = url
-    db.add(p); db.commit()
-    return {"ok": True, "url": url}
+# Note: unified base-resume setter above; keep only JSON body variant to avoid conflicts

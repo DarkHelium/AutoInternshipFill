@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AI Career Co-pilot Settings</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f8f9fa;
+    }
+    
+    .header {
+      text-align: center;
+      margin-bottom: 40px;
+      padding: 20px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 12px;
+    }
+    
+    .header h1 {
+      margin: 0;
+      font-size: 24px;
+    }
+    
+    .header p {
+      margin: 10px 0 0 0;
+      opacity: 0.9;
+    }
+    
+    .section {
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    
+    .section h2 {
+      margin: 0 0 15px 0;
+      font-size: 18px;
+      color: #333;
+    }
+    
+    .form-group {
+      margin-bottom: 15px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 600;
+      color: #555;
+    }
+    
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px;
+      border: 2px solid #e9ecef;
+      border-radius: 6px;
+      font-size: 14px;
+      transition: border-color 0.2s;
+    }
+    
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: #667eea;
+    }
+    
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .checkbox-group input[type="checkbox"] {
+      width: auto;
+    }
+    
+    .btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .btn:hover {
+      background: #5a6fd8;
+    }
+    
+    .btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .btn-secondary {
+      background: #6c757d;
+    }
+    
+    .btn-secondary:hover {
+      background: #5a6268;
+    }
+    
+    .status {
+      margin-top: 15px;
+      padding: 10px;
+      border-radius: 6px;
+      display: none;
+    }
+    
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    
+    .help-text {
+      font-size: 12px;
+      color: #6c757d;
+      margin-top: 5px;
+    }
+    
+    .api-key-field {
+      position: relative;
+    }
+    
+    .api-key-toggle {
+      position: absolute;
+      right: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 12px;
+      color: #6c757d;
+    }
+    
+    .constraint-item {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 6px;
+      padding: 15px;
+      margin-bottom: 10px;
+    }
+    
+    .constraint-item h4 {
+      margin: 0 0 10px 0;
+      font-size: 14px;
+      color: #495057;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🤖 AI Career Co-pilot Settings</h1>
+    <p>Configure your AI assistant for optimal job applications</p>
+  </div>
+  
+  <!-- API Configuration -->
+  <div class="section">
+    <h2>🔑 AI Configuration</h2>
+    
+    <div class="form-group">
+      <label for="api-key">OpenAI API Key</label>
+      <div class="api-key-field">
+        <input type="password" id="api-key" placeholder="sk-...">
+        <button type="button" class="api-key-toggle" onclick="toggleApiKey()">Show</button>
+      </div>
+      <div class="help-text">
+        Your personal OpenAI API key for AI analysis and resume tailoring. 
+        <a href="https://platform.openai.com/api-keys" target="_blank">Get your API key here</a>
+      </div>
+    </div>
+    
+    <div class="form-group">
+      <label for="api-base">AI API Base URL</label>
+      <input type="text" id="api-base" placeholder="http://localhost:11434/v1">
+      <div class="help-text">OpenAI-compatible endpoint (e.g., local server or proxy)</div>
+    </div>
+
+    <div class="form-group">
+      <label for="ai-model">AI Model</label>
+      <select id="ai-model">
+        <option value="gpt-4">GPT-4.1 (Recommended)</option>
+        <option value="gpt-5">GPT-5 (Latest)</option>
+        <option value="gpt-3.5-turbo">GPT-4o (Faster/Cheaper)</option>
+      </select>
+      <div class="help-text">Choose a model available on your configured API base.</div>
+    </div>
+  </div>
+  
+  <!-- Automation Settings -->
+  <div class="section">
+    <h2>⚡ Automation Preferences</h2>
+    
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="auto-analyze">
+        <label for="auto-analyze">Auto-analyze jobs when detected</label>
+      </div>
+      <div class="help-text">Automatically analyze job descriptions for match score and requirements</div>
+    </div>
+    
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="auto-fill">
+        <label for="auto-fill">Enable intelligent auto-fill</label>
+      </div>
+      <div class="help-text">Automatically fill application forms with tailored information</div>
+    </div>
+    
+    <div class="form-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="show-notifications">
+        <label for="show-notifications">Show notifications</label>
+      </div>
+      <div class="help-text">Display notifications for AI analysis results and actions</div>
+    </div>
+  </div>
+  
+  <!-- Career Constraints -->
+  <div class="section">
+    <h2>🎯 Career Constraints</h2>
+    <p>Help AI tailor your applications by setting your preferences and constraints:</p>
+    
+    <div class="constraint-item">
+      <h4>📍 Location Preferences</h4>
+      <div class="form-group">
+        <label for="preferred-locations">Preferred Locations</label>
+        <input type="text" id="preferred-locations" placeholder="San Francisco, New York, Remote">
+        <div class="help-text">Comma-separated list of preferred work locations</div>
+      </div>
+      
+      <div class="form-group">
+        <div class="checkbox-group">
+          <input type="checkbox" id="remote-only">
+          <label for="remote-only">Remote work only</label>
+        </div>
+      </div>
+    </div>
+    
+    <div class="constraint-item">
+      <h4>💰 Salary Expectations</h4>
+      <div class="form-group">
+        <label for="salary-min">Minimum Salary</label>
+        <input type="number" id="salary-min" placeholder="70000">
+      </div>
+      
+      <div class="form-group">
+        <label for="salary-max">Maximum Salary</label>
+        <input type="number" id="salary-max" placeholder="150000">
+      </div>
+    </div>
+    
+    <div class="constraint-item">
+      <h4>🚫 Constraints & Dealbreakers</h4>
+      <div class="form-group">
+        <label for="dealbreakers">Dealbreakers</label>
+        <textarea id="dealbreakers" rows="3" placeholder="No travel required, No weekends, Must have healthcare, etc."></textarea>
+        <div class="help-text">Things you absolutely cannot accept in a role</div>
+      </div>
+    </div>
+    
+    <div class="constraint-item">
+      <h4>⭐ Preferences</h4>
+      <div class="form-group">
+        <label for="preferences">Nice-to-haves</label>
+        <textarea id="preferences" rows="3" placeholder="Flexible hours, learning opportunities, startup environment, etc."></textarea>
+        <div class="help-text">Things you'd prefer but aren't required</div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- Profile Information -->
+  <div class="section">
+    <h2>👤 Profile Information</h2>
+    
+    <div class="form-group">
+      <label for="experience-level">Experience Level</label>
+      <select id="experience-level">
+        <option value="entry">Entry Level (0-2 years)</option>
+        <option value="mid">Mid Level (2-5 years)</option>
+        <option value="senior">Senior Level (5+ years)</option>
+        <option value="lead">Lead/Principal (8+ years)</option>
+      </select>
+    </div>
+    
+    <div class="form-group">
+      <label for="target-roles">Target Roles</label>
+      <input type="text" id="target-roles" placeholder="Software Engineer, Frontend Developer, Full Stack">
+      <div class="help-text">Comma-separated list of roles you're targeting</div>
+    </div>
+  </div>
+  
+  <!-- Actions -->
+  <div class="section">
+    <button class="btn" onclick="saveSettings()">💾 Save Settings</button>
+    <button class="btn btn-secondary" onclick="testConnection()">🧪 Test API Connection</button>
+    
+    <div class="status" id="status"></div>
+  </div>
+  
+  <!-- Resume Management -->
+  <div class="section">
+    <h2>📄 Resume Management</h2>
+    
+    <div class="form-group">
+      <label for="resume-upload">Upload Base Resume</label>
+      <input type="file" id="resume-upload" accept=".pdf,.doc,.docx" style="margin-bottom: 10px;">
+      <button class="btn" onclick="uploadResume()">📤 Upload Resume</button>
+    </div>
+    
+    <div class="form-group" id="current-resume" style="display: none;">
+      <label>Current Resume</label>
+      <div id="resume-info" style="background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 10px;">
+        <div id="resume-name"></div>
+        <div id="resume-date" style="font-size: 12px; color: #6c757d;"></div>
+      </div>
+      <button class="btn btn-secondary" onclick="removeResume()">🗑️ Remove Resume</button>
+    </div>
+    
+    <div class="help-text">
+      Upload your base resume for AI analysis and tailoring. Supported formats: PDF, DOC, DOCX
+    </div>
+  </div>
+
+  <!-- Data Management -->
+  <div class="section">
+    <h2>🗂️ Data Management</h2>
+    
+    <div class="form-group">
+      <button class="btn btn-secondary" onclick="exportData()">📤 Export Data</button>
+      <button class="btn btn-secondary" onclick="clearData()">🗑️ Clear All Data</button>
+    </div>
+    
+    <div class="help-text">
+      Export your settings and analysis data, or clear all stored information.
+    </div>
+  </div>
+  
+  <script src="options.js"></script>
+</body>
+</html>

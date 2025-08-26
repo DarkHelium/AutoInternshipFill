@@ -1,27 +1,15 @@
 services:
-  desktop:
-    build: ./desktop-runner
-    environment:
-      - DISPLAY=:20
-      - VNC_PASSWORD=secret
-      - NOVNC_PORT=6080
-      - VNC_PORT=5901
-    ports:
-      - "6080:6080"   # noVNC web UI
-      - "9001:9001"   # automation API
-    shm_size: "1gb"   # good for Chromium
-
   backend:
     build: ./backend
     environment:
       - FILES_DIR=/files
-      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
-      - DESKTOP_NOVNC=http://localhost:6080/vnc.html?autoconnect=true
-      - DESKTOP_API=http://desktop:9001
-      - BACKEND_INTERNAL=http://backend:8000
+      - CORS_ORIGINS=*
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEFAULT_AI_MODEL=${DEFAULT_AI_MODEL:-gpt-5}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:11434/v1}
+    env_file:
+      - .env
     volumes:
       - ./files:/files
     ports:
       - "8000:8000"
-    depends_on:
-      - desktop

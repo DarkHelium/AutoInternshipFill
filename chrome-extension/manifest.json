@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "AI Career Co-pilot",
+  "version": "1.0.0",
+  "description": "AI-powered career co-pilot that tailors resumes and autofills job applications intelligently",
+  
+  "permissions": [
+    "activeTab",
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  
+  "host_permissions": [
+    "https://*/*",
+    "http://localhost:8000/*"
+  ],
+  
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*/*"
+      ],
+      "js": ["content/job-detector.js", "content/form-filler.js"],
+      "css": ["content/styles.css"]
+    }
+  ],
+  
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "AI Career Co-pilot"
+  },
+  
+  "options_page": "options/options.html"
+}
