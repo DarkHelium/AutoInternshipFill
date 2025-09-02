@@ -2,6 +2,7 @@
 class JobDetector {
   constructor() {
     this.currentJob = null;
+    this.isAnalyzing = false; // prevent duplicate analyze calls
     this.init();
   }
 
@@ -244,13 +245,22 @@ class JobDetector {
 
   async checkAutoAnalyze() {
     const settings = await chrome.storage.sync.get(['autoAnalyze']);
-    if (settings.autoAnalyze && this.currentJob) {
-      this.analyzeCurrentJob();
-    }
+    if (!settings.autoAnalyze || !this.currentJob) return;
+
+    // Skip if already analyzed for this URL
+    const storageKey = `analysis_${this.currentJob.url}`;
+    const existing = await chrome.storage.local.get(storageKey);
+    if (existing[storageKey]) return;
+
+    // Skip if an analysis is already in-flight
+    if (this.isAnalyzing) return;
+    this.analyzeCurrentJob();
   }
 
   async analyzeCurrentJob() {
     if (!this.currentJob) return;
+    if (this.isAnalyzing) return;
+    this.isAnalyzing = true;
     
     try {
       // Check if user has uploaded a resume first
@@ -281,6 +291,8 @@ class JobDetector {
     } catch (error) {
       console.error('Job analysis failed:', error);
       this.showNotification('Job analysis failed: ' + error.message, 'error');
+    } finally {
+      this.isAnalyzing = false;
     }
   }
 

@@ -36,8 +36,8 @@ app = FastAPI(title="AI Career Co-pilot Backend")
 origins_env = os.getenv("CORS_ORIGINS")
 origins = [o.strip() for o in (origins_env or "").split(",") if o.strip()]
 if not origins:
-    # Sensible default for local dev
-    origins = ["http://localhost:5173"]
+    # Sensible default for local dev (Remix 5173, Next.js 3000)
+    origins = ["http://localhost:5173", "http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -54,9 +54,14 @@ Base.metadata.create_all(bind=engine)
 
 # Initialize Jinja2 environment for PDF rendering
 env = Environment(loader=FileSystemLoader("./templates"))
-resume_tpl = env.get_template("resume.html")
+try:
+    resume_tpl = env.get_template("resume.html")
+except Exception:
+    resume_tpl = None  # Loaded lazily when PDF rendering is used
 
 def render_pdf_from_json(resume_json: dict, out_path: str):
+    if resume_tpl is None:
+        raise HTTPException(500, "Missing resume template. Ensure templates/resume.html exists.")
     html = resume_tpl.render(r=resume_json)
     if HTML is None:
         # Defer failure until actually attempting to render a PDF
@@ -100,6 +105,14 @@ def validate_pdf_file(file_path: str) -> bool:
 @app.get("/health")
 def health():
     return {"ok": True}
+
+# Mount new, cleaner routers for profiles and runs
+from .api.routes_profiles import router as profiles_router
+from .api.routes_runs import router as runs_router
+from .api.routes_openai_compat import router as openai_router
+app.include_router(profiles_router)
+app.include_router(runs_router)
+app.include_router(openai_router)
 
 def _ingest_into_db(db: Session) -> int:
     owner = os.getenv("GITHUB_OWNER", "vanshb03")
@@ -401,7 +414,7 @@ async def analyze_job_description(request: JobAnalysisRequest, db: Session = Dep
         # Get user's AI settings
         ai_service = get_ai_service(
             user_api_key=profile.ai_api_key,
-            model=profile.preferred_ai_model or "gpt-5"
+            model=profile.preferred_ai_model or os.getenv("DEFAULT_AI_MODEL", "deepseek-reasoner")
         )
         
         # Enhanced job scraping with Playwright if URL provided
@@ -507,7 +520,7 @@ async def tailor_resume(request: ResumeTailoringRequest, db: Session = Depends(g
         # Get AI service
         ai_service = get_ai_service(
             user_api_key=profile.ai_api_key,
-            model=profile.preferred_ai_model or "gpt-5"
+            model=profile.preferred_ai_model or os.getenv("DEFAULT_AI_MODEL", "deepseek-reasoner")
         )
         
         # Prepare job analysis for AI
@@ -571,31 +584,54 @@ async def tailor_resume(request: ResumeTailoringRequest, db: Session = Depends(g
 @app.post("/ai/ats-preview")
 async def generate_ats_preview(job_id: str, db: Session = Depends(get_db)):
     """Generate ATS preview of tailored resume"""
-    try:
         # Get latest tailoring result for job
-        tailor_result = db.query(TailorResult).filter(
+    tailor_result = db.query(TailorResult).filter(
             TailorResult.job_id == job_id
-        ).order_by(TailorResult.created_at.desc()).first()
+    ).order_by(TailorResult.created_at.desc()).first()
         
-        if not tailor_result or not tailor_result.ai_analysis:
-            raise HTTPException(404, "No tailored resume found for this job")
+    if not tailor_result or not tailor_result.ai_analysis:
+        raise HTTPException(404, "No tailored resume found for this job")
         
-        profile = db.query(Profile).get("default")
-        ai_service = get_ai_service(
+    profile = db.query(Profile).get("default")
+    ai_service = get_ai_service(
             user_api_key=profile.ai_api_key if profile else None,
-            model=profile.preferred_ai_model if profile else "gpt-5"
-        )
-        
-        # Get tailored resume content
-        tailored_resume = tailor_result.ai_analysis.get("tailored_resume", {})
-        
-        # Generate ATS preview
-        ats_preview = await ai_service.generate_ats_preview(tailored_resume)
-        
-        return ats_preview
-        
-    except Exception as e:
-        raise HTTPException(500, f"ATS preview generation failed: {str(e)}")
+            model=(profile.preferred_ai_model if profile and profile.preferred_ai_model else os.getenv("DEFAULT_AI_MODEL", "deepseek-reasoner"))
+    )
+
+    # Get tailored resume content and produce ATS preview
+    tailored_resume = tailor_result.ai_analysis.get("tailored_resume", {})
+    ats_preview = await ai_service.generate_ats_preview(tailored_resume)
+    return ats_preview
+
+@app.post("/profile/bootstrap-jake-resume")
+def bootstrap_jake_resume(db: Session = Depends(get_db)):
+    """Create a simple 'Jake' resume PDF from template and set as base resume.
+    This helps during first-run when the user hasn't uploaded a resume yet.
+    """
+    # Minimal resume JSON for template
+    resume_json = {
+        "name": "Jake Applicant",
+        "contact": {"email": "jake@example.com", "phone": "(555) 123-4567", "location": "San Francisco, CA"},
+        "summary": "Computer Science student with internships in web dev and ML; seeking 2026 SWE internship.",
+        "skills": ["Python", "JavaScript", "React", "FastAPI", "SQL"],
+        "experience": [
+            {"company": "Campus Lab", "title": "Software Intern", "start_date": "2025-06", "end_date": "2025-08",
+             "bullets": ["Built internal dashboards with React/Flask", "Improved API latency by 25%"]}
+        ],
+        "projects": [
+            {"name": "Course Planner", "description": "Full‑stack planner for students", "bullets": ["React + FastAPI", "Deployed on Render"]}
+        ],
+        "education": [{"school": "State University", "degree": "B.S. Computer Science", "graduation": "2026"}]
+    }
+    os.makedirs(files_dir, exist_ok=True)
+    out_path = os.path.join(files_dir, "resume_jake.pdf")
+    render_pdf_from_json(resume_json, out_path)
+    # Set base resume URL
+    p = db.query(Profile).get("default") or Profile(id="default", name="", email="")
+    db.add(p)
+    p.base_resume_url = f"/files/{os.path.basename(out_path)}"
+    db.commit()
+    return {"ok": True, "url": p.base_resume_url}
 
 @app.get("/ai/ats-preview")
 async def generate_ats_preview_get(job_id: str, db: Session = Depends(get_db)):

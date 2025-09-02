@@ -25,7 +25,7 @@
       "matches": [
         "https://*/*"
       ],
-      "js": ["content/job-detector.js", "content/form-filler.js"],
+      "js": ["content/form-filler.js", "content/autofill-run-listener.js"],
       "css": ["content/styles.css"]
     }
   ],

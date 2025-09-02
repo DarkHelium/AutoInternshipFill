@@ -16,6 +16,11 @@ class FormFiller {
           .then(sendResponse)
           .catch(error => sendResponse({ error: error.message }));
         return true; // Keep message channel open
+      } else if (request.action === 'fillWithPayload') {
+        this.fillForm(request.data)
+          .then(sendResponse)
+          .catch(error => sendResponse({ error: error.message }));
+        return true;
       }
     });
   }
@@ -250,5 +255,5 @@ class FormFiller {
   }
 }
 
-// Initialize form filler
-new FormFiller();
+// Initialize form filler and expose globally for other content scripts
+window.formFiller = new FormFiller();

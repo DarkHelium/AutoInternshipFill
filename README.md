@@ -65,6 +65,18 @@ The backend will be available at `http://localhost:8000`
 3. Click "Load unpacked" and select the `chrome-extension` folder
 4. Pin the extension to your toolbar
 
+### 3. Web App (Paste Job Link)
+
+1. Start the Next.js app
+```
+cd AutoInternshipFill/web
+npm install
+npm run dev
+```
+2. Open http://localhost:3100
+3. Paste a job link and your info, then submit
+4. A new tab opens with `?autofill=1&runId=...` and the extension autofills the page
+
 ### 3. Configuration
 
 1. Click the extension icon and go to Settings

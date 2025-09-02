@@ -16,12 +16,17 @@ logger = logging.getLogger(__name__)
 class AIService:
     """Core AI service for career co-pilot functionality"""
     
-    def __init__(self, api_key: Optional[str] = None, model: str = "gpt-5"):
+    def __init__(self, api_key: Optional[str] = None, model: str = "deepseek-reasoner"):
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.model = model
-        # Allow overriding base URL to point at a local OpenAI-compatible server
-        # Example for host machine service from inside Docker: http://host.docker.internal:11434/v1
-        self.base_url = os.getenv("OPENAI_BASE_URL", "http://host.docker.internal:11434/v1")
+        self.model = model or os.getenv("DEFAULT_AI_MODEL", "deepseek-reasoner")
+        # Route base URL depending on model vendor.
+        # - OpenAI-compatible (local/hosted): use OPENAI_BASE_URL (default host.docker.local proxy)
+        # - DeepSeek: use DEEPSEEK_BASE_URL (default public API per docs)
+        if "deepseek" in self.model:
+            self.base_url = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        else:
+            # Example for host machine service from inside Docker: http://host.docker.internal:11434/v1
+            self.base_url = os.getenv("OPENAI_BASE_URL", "http://host.docker.internal:11434/v1")
         
     async def analyze_job_description(self, job_url: str, job_description: str, user_profile: Dict) -> Dict[str, Any]:
         """
@@ -66,11 +71,11 @@ class AIService:
         """
         
         try:
-            response = await self._call_ai_api(prompt, "job_analysis")
-            analysis = json.loads(response)
+            response_text = await self._call_llm(prompt, interaction_type="job_analysis")
+            analysis = json.loads(response_text)
             
             # Store AI interaction for learning
-            await self._store_ai_interaction("job_analysis", prompt, response, None)
+            await self._store_ai_interaction("job_analysis", prompt, response_text, None)
             
             return analysis
         except Exception as e:
@@ -78,96 +83,28 @@ class AIService:
             return self._fallback_job_analysis()
 
     async def tailor_resume(self, job_analysis: Dict, user_resume: str, user_constraints: Dict = None) -> Dict[str, Any]:
-        """
-        AI-powered resume tailoring based on job analysis
-        """
-        constraints_text = ""
-        if user_constraints:
-            constraints_text = f"""
-            USER CONSTRAINTS (MUST FOLLOW):
-            {json.dumps(user_constraints, indent=2)}
-            """
-
-        prompt = f"""
-        You are an expert resume writer and ATS optimization specialist. Tailor this resume for the job requirements while maintaining complete honesty.
-
-        Job Analysis:
-        {json.dumps(job_analysis, indent=2)}
-
-        Current Resume Content:
-        {user_resume}
-
-        {constraints_text}
-
-        CRITICAL RULES:
-        1. NEVER fabricate experience, skills, or qualifications
-        2. Only enhance/reframe existing experience to highlight relevance
-        3. Use job posting keywords naturally, avoid keyword stuffing
-        4. Maintain ATS-friendly formatting (standard section headers)
-        5. Keep resume truthful but compelling
-
-        Provide a JSON response with:
-        {{
-            "tailored_resume": {{
-                "name": "User's name",
-                "contact": {{
-                    "email": "email",
-                    "phone": "phone",
-                    "location": "location",
-                    "linkedin": "linkedin_url",
-                    "github": "github_url"
-                }},
-                "summary": "Professional summary optimized for this role",
-                "skills": ["List of relevant skills with job keywords integrated"],
-                "experience": [
-                    {{
-                        "company": "Company name",
-                        "title": "Job title",
-                        "start_date": "YYYY-MM",
-                        "end_date": "YYYY-MM or Present",
-                        "bullets": [
-                            "Achievement bullets rewritten to highlight job-relevant skills",
-                            "Include metrics when possible",
-                            "Use action verbs and job keywords naturally"
-                        ]
-                    }}
-                ],
-                "projects": [
-                    {{
-                        "name": "Project name",
-                        "description": "Brief description",
-                        "bullets": ["Highlight relevant technical skills and outcomes"]
-                    }}
-                ],
-                "education": [
-                    {{
-                        "school": "University name",
-                        "degree": "Degree type",
-                        "graduation": "YYYY",
-                        "relevant_coursework": "If applicable to job"
-                    }}
-                ]
-            }},
-            "changes_explanation": "Clear explanation of what was changed and why",
-            "ats_score": 0.85,  // Predicted ATS compatibility 0-1
-            "keyword_integration": [
-                "List of job keywords successfully integrated"
-            ],
-            "improvement_suggestions": [
-                "Additional suggestions for strengthening the application"
-            ]
-        }}
-
-        Focus on making the resume compelling for both ATS and human reviewers.
-        """
-        
+        """AI-powered resume tailoring based on job analysis using agent module."""
         try:
-            response = await self._call_ai_api(prompt, "resume_tailoring")
-            result = json.loads(response)
-            
-            # Store AI interaction
-            await self._store_ai_interaction("resume_tailoring", prompt, response, None)
-            
+            from agents.resume_tailor.agent import tailor_resume_with_agent
+            result = await tailor_resume_with_agent(
+                job_analysis,
+                user_resume,
+                user_constraints or {},
+                model=self.model,
+                api_key=self.api_key,
+                base_url=self.base_url,
+            )
+
+            # Store AI interaction (prompt omitted; store compact context instead)
+            await self._store_ai_interaction(
+                "resume_tailoring",
+                prompt=json.dumps({
+                    "job_analysis_keys": list(job_analysis.keys()),
+                    "has_constraints": bool(user_constraints),
+                }),
+                response=json.dumps(result),
+                job_id=None,
+            )
             return result
         except Exception as e:
             logger.error(f"Resume tailoring failed: {e}")
@@ -212,18 +149,49 @@ class AIService:
         """
         
         try:
-            response = await self._call_ai_api(prompt, "ats_preview")
-            result = json.loads(response)
+            response_text = await self._call_llm(prompt, interaction_type="ats_preview")
+            result = json.loads(response_text)
             
-            await self._store_ai_interaction("ats_preview", prompt, response, None)
+            await self._store_ai_interaction("ats_preview", prompt, response_text, None)
             
             return result
         except Exception as e:
             logger.error(f"ATS preview generation failed: {e}")
             return self._fallback_ats_preview()
 
-    async def _call_ai_api(self, prompt: str, interaction_type: str) -> str:
-        """Make API call to OpenAI-compatible endpoint (local or hosted)"""
+    async def _call_llm(self, prompt: str, interaction_type: str) -> str:
+        """Call an LLM using openai-agents when available, else HTTP fallback."""
+        # Try openai-agents first if installed
+        try:
+            import importlib
+            oa = importlib.import_module('openai_agents')  # type: ignore
+            # Minimal, conservative usage to avoid hard dependency on exact API
+            # Expectation: a client with chat.completions.create similar to OpenAI
+            client = getattr(oa, 'Client', None)
+            if client is not None:
+                inst = client(api_key=self.api_key)
+                resp = await inst.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are an expert career advisor and resume specialist. Always provide valid JSON responses."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.7,
+                    max_tokens=4000
+                )
+                # Try common response shapes
+                try:
+                    return resp.choices[0].message.content  # type: ignore[attr-defined]
+                except Exception:
+                    return str(resp)
+        except Exception:
+            # Fall back to HTTP-compatible API below
+            pass
+
+        return await self._call_ai_api_http(prompt)
+
+    async def _call_ai_api_http(self, prompt: str) -> str:
+        """HTTP call to OpenAI-compatible endpoint (local or hosted)"""
         use_local = self.base_url.startswith("http://localhost") or \
                     self.base_url.startswith("https://localhost") or \
                     "host.docker.internal" in self.base_url

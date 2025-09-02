@@ -87,3 +87,20 @@ class AIInteractionFeedback(BaseModel):
     interaction_id: str
     user_rating: int  # 1-5 stars
     feedback_notes: Optional[str] = None
+
+# Runs API
+class RunCreate(BaseModel):
+    job_url: str
+    profile_id: Optional[str] = None
+    profile: Optional[ProfileIn] = None
+
+class RunOut(BaseModel):
+    id: str
+    job_id: str
+    job_url: str
+    profile_id: str
+    status: str
+
+class RunPayload(BaseModel):
+    # Payload consumed by extension form-filler
+    tailored_resume: Dict[str, Any]
