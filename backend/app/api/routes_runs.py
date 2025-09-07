@@ -17,12 +17,12 @@ def _ensure_job(db: Session, job_url: str) -> Job:
 
 def _ensure_profile(db: Session, profile_id: Optional[str], profile_in: Optional[ProfileIn]) -> Profile:
     if profile_id:
-        prof = db.query(Profile).get(profile_id)
+        prof = db.get(Profile, profile_id)
         if not prof:
             raise HTTPException(404, "profile not found")
         return prof
     # default profile
-    prof = db.query(Profile).get("default") or Profile(id="default")
+    prof = db.get(Profile, "default") or Profile(id="default")
     if profile_in:
         for k, v in profile_in.model_dump().items():
             setattr(prof, k, v)
@@ -58,11 +58,11 @@ def create_run(body: RunCreate, db: Session = Depends(get_db)):
 
 @router.get("/{run_id}/payload", response_model=RunPayload)
 def get_run_payload(run_id: str, db: Session = Depends(get_db)):
-    run = db.query(Run).get(run_id)
+    run = db.get(Run, run_id)
     if not run:
         raise HTTPException(404, "run not found")
-    job = db.query(Job).get(run.job_id)
-    profile = db.query(Profile).get("default")
+    job = db.get(Job, run.job_id)
+    profile = db.get(Profile, "default")
     if not profile:
         raise HTTPException(400, "no profile available")
 

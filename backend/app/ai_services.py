@@ -27,6 +27,322 @@ class AIService:
         else:
             # Example for host machine service from inside Docker: http://host.docker.internal:11434/v1
             self.base_url = os.getenv("OPENAI_BASE_URL", "http://host.docker.internal:11434/v1")
+
+class AIFormFillerService:
+    """Specialized AI service for intelligent form filling using OCR and vision capabilities"""
+    
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        self.model = "gpt-4o-mini"  # GPT-4.1-nano equivalent for HTML analysis
+        self.vision_model = "gpt-4o"  # GPT-4o for OCR-like visual analysis
+        self.base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        
+    async def analyze_form_fields(self, page_html: str, job_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze form fields on a job application page using HTML structure
+        """
+        prompt = f"""
+        You are an expert at analyzing job application forms. Analyze this HTML and identify fillable form fields.
+
+        Job Context:
+        Company: {job_context.get('company', 'Unknown')}
+        Position: {job_context.get('title', 'Unknown')}
+        
+        HTML Content (truncated for analysis):
+        {page_html[:8000]}
+
+        Identify and categorize all form fields that should be filled for a job application. 
+        
+        Provide a JSON response with:
+        {{
+            "detected_fields": [
+                {{
+                    "field_type": "personal_info|experience|education|custom",
+                    "field_name": "name/id/class attribute",
+                    "field_purpose": "what this field is for (e.g., 'first_name', 'email', 'cover_letter')",
+                    "selector": "CSS selector to find this field",
+                    "input_type": "text|textarea|select|checkbox|radio",
+                    "required": true/false,
+                    "placeholder": "placeholder text if any"
+                }}
+            ],
+            "form_complexity": "simple|moderate|complex",
+            "total_fields": 0,
+            "ats_platform": "detected ATS platform or 'unknown'",
+            "special_requirements": ["any special form handling needed"]
+        }}
+        
+        Focus on standard job application fields like name, email, phone, address, cover letter, etc.
+        """
+        
+        try:
+            response_text = await self._call_llm(prompt, interaction_type="form_analysis")
+            analysis = json.loads(response_text)
+            
+            await self._store_ai_interaction("form_analysis", prompt, response_text, None)
+            
+            return analysis
+        except Exception as e:
+            logger.error(f"Form analysis failed: {e}")
+            return self._fallback_form_analysis()
+
+    async def analyze_form_with_vision(self, screenshot_base64: str, job_context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Analyze form fields using GPT-4o vision capabilities for OCR-like form understanding
+        Based on OpenAI's vision capabilities for document analysis
+        """
+        prompt = f"""
+        You are an intelligent OCR-like form analysis tool that can visually understand job application forms.
+
+        Job Context:
+        Company: {job_context.get('company', 'Unknown')}
+        Position: {job_context.get('title', 'Unknown')}
+        
+        Please analyze this job application form screenshot and identify all fillable form fields using OCR-like vision.
+
+        Provide a JSON response with:
+        {{
+            "detected_fields": [
+                {{
+                    "field_type": "personal_info|experience|education|custom",
+                    "field_purpose": "what this field is for (e.g., 'first_name', 'email', 'cover_letter')",
+                    "field_location": "visual description of where the field is located",
+                    "input_type": "text|textarea|select|checkbox|radio",
+                    "required": true/false,
+                    "placeholder_text": "any visible placeholder or label text",
+                    "visual_context": "surrounding text or labels that help identify the field"
+                }}
+            ],
+            "form_complexity": "simple|moderate|complex",
+            "total_fields": 0,
+            "visual_layout": "description of the form's visual structure",
+            "special_requirements": ["any special form handling needed based on visual analysis"]
+        }}
+        
+        Use your vision capabilities to:
+        1. Identify input fields, text areas, dropdowns, checkboxes
+        2. Read labels and placeholder text
+        3. Understand form structure and groupings
+        4. Detect required vs optional fields
+        """
+        
+        try:
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            
+            payload = {
+                "model": self.vision_model,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an expert at visually analyzing job application forms using OCR-like capabilities. Always provide valid JSON responses."
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url", 
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{screenshot_base64}",
+                                    "detail": "high"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "temperature": 0.3,
+                "max_tokens": 2000
+            }
+            
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+                
+                if response.status_code != 200:
+                    raise Exception(f"Vision API call failed: {response.status_code} {response.text}")
+                    
+                result = response.json()
+                vision_analysis = json.loads(result["choices"][0]["message"]["content"])
+                
+                await self._store_ai_interaction("vision_form_analysis", prompt, result["choices"][0]["message"]["content"], None)
+                
+                return vision_analysis
+                
+        except Exception as e:
+            logger.error(f"Vision-based form analysis failed: {e}")
+            return self._fallback_form_analysis()
+
+    async def generate_form_responses(self, form_fields: List[Dict], resume_data: Dict, job_context: Dict) -> Dict[str, Any]:
+        """
+        Generate appropriate responses for each form field based on resume data and job context
+        """
+        prompt = f"""
+        You are filling out a job application form intelligently. Generate appropriate responses for each field.
+
+        Job Context:
+        Company: {job_context.get('company', 'Unknown')}
+        Position: {job_context.get('title', 'Unknown')}
+        Job Description: {job_context.get('description', '')[:2000]}
+
+        Resume Data:
+        {json.dumps(resume_data, indent=2)}
+
+        Form Fields to Fill:
+        {json.dumps(form_fields, indent=2)}
+
+        For each field, generate an appropriate response based on the resume data. Be accurate and professional.
+
+        CRITICAL RULES:
+        1. NEVER fabricate information not in the resume
+        2. Use exact information from resume data
+        3. For cover letters, create compelling but truthful content
+        4. For salary expectations, be strategic but reasonable
+        5. For "why do you want to work here" type questions, use job context
+
+        Provide a JSON response with:
+        {{
+            "field_responses": {{
+                "field_selector_or_name": "value to fill",
+                "another_field": "another value"
+            }},
+            "cover_letter_content": "Generated cover letter if needed (max 500 words)",
+            "confidence_score": 0.9,
+            "special_instructions": ["any special handling needed for specific fields"]
+        }}
+
+        Return only JSON.
+        """
+        
+        try:
+            response_text = await self._call_llm(prompt, interaction_type="form_filling")
+            responses = json.loads(response_text)
+            
+            await self._store_ai_interaction("form_filling", prompt, response_text, None)
+            
+            return responses
+        except Exception as e:
+            logger.error(f"Form response generation failed: {e}")
+            return self._fallback_form_responses()
+
+    async def generate_responses_from_vision(self, vision_analysis: Dict, resume_data: Dict, job_context: Dict) -> Dict[str, Any]:
+        """
+        Generate form responses based on visual form analysis using OCR understanding
+        """
+        prompt = f"""
+        You are filling out a job application form based on visual/OCR analysis. Generate appropriate responses for each field.
+
+        Job Context:
+        Company: {job_context.get('company', 'Unknown')}
+        Position: {job_context.get('title', 'Unknown')}
+
+        Resume Data:
+        {json.dumps(resume_data, indent=2)}
+
+        Visual Form Analysis:
+        {json.dumps(vision_analysis, indent=2)}
+
+        For each detected field, generate an appropriate response based on the resume data and job context.
+
+        CRITICAL RULES:
+        1. NEVER fabricate information not in the resume
+        2. Use exact information from resume data
+        3. For cover letters, create compelling but truthful content
+        4. Match responses to the field purpose identified in the visual analysis
+        5. Consider visual context and field placement
+
+        Provide a JSON response with:
+        {{
+            "field_responses": {{
+                "field_description_or_location": "value to fill based on visual field identification"
+            }},
+            "cover_letter_content": "Generated cover letter if needed (max 500 words)",
+            "confidence_score": 0.9,
+            "filling_strategy": "description of how to apply these responses to the visual form"
+        }}
+
+        Return only JSON.
+        """
+        
+        try:
+            response_text = await self._call_llm(prompt, interaction_type="vision_form_filling")
+            responses = json.loads(response_text)
+            
+            await self._store_ai_interaction("vision_form_filling", prompt, response_text, None)
+            
+            return responses
+        except Exception as e:
+            logger.error(f"Vision-based form response generation failed: {e}")
+            return self._fallback_form_responses()
+
+    async def _call_llm(self, prompt: str, interaction_type: str) -> str:
+        """Call GPT-4.1-nano for form filling tasks"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": "You are an expert at analyzing job application forms and generating appropriate responses. Always provide valid JSON responses."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,  # Lower temperature for more consistent form filling
+            "max_tokens": 2000
+        }
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=headers,
+                json=payload
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"API call failed: {response.status_code} {response.text}")
+                
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
+
+    async def _store_ai_interaction(self, interaction_type: str, prompt: str, response: str, job_id: Optional[str]):
+        """Store AI interaction for learning and cost tracking"""
+        try:
+            db = SessionLocal()
+            interaction = AIInteraction(
+                job_id=job_id,
+                interaction_type=interaction_type,
+                prompt=prompt,
+                response=response,
+                model_used=self.model
+            )
+            db.add(interaction)
+            db.commit()
+            db.close()
+        except Exception as e:
+            logger.error(f"Failed to store AI interaction: {e}")
+
+    def _fallback_form_analysis(self) -> Dict[str, Any]:
+        """Fallback when form analysis fails"""
+        return {
+            "detected_fields": [],
+            "form_complexity": "unknown",
+            "total_fields": 0,
+            "ats_platform": "unknown",
+            "special_requirements": ["AI analysis failed - using basic form filling"]
+        }
+
+    def _fallback_form_responses(self) -> Dict[str, Any]:
+        """Fallback when form response generation fails"""
+        return {
+            "field_responses": {},
+            "cover_letter_content": "AI form filling service unavailable",
+            "confidence_score": 0.0,
+            "special_instructions": ["Please fill form manually - AI service failed"]
+        }
         
     async def analyze_job_description(self, job_url: str, job_description: str, user_profile: Dict) -> Dict[str, Any]:
         """
@@ -278,7 +594,11 @@ class AIService:
         }
 
 
-# Utility function to get AI service instance
+# Utility functions to get AI service instances
 def get_ai_service(user_api_key: Optional[str] = None, model: str = "gpt-5") -> AIService:
     """Get AI service instance with user's API key or system default"""
     return AIService(api_key=user_api_key, model=model)
+
+def get_form_filler_service(user_api_key: Optional[str] = None) -> AIFormFillerService:
+    """Get AI form filler service instance (uses GPT-4.1-nano + GPT-4o vision)"""
+    return AIFormFillerService(api_key=user_api_key)

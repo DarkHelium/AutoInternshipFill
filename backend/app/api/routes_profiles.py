@@ -8,7 +8,7 @@ router = APIRouter(prefix="/profiles", tags=["profiles"])
 
 @router.get("/default", response_model=ProfileOut)
 def get_default_profile(db: Session = Depends(get_db)):
-    p = db.query(Profile).get("default")
+    p = db.get(Profile, "default")
     if not p:
         p = Profile(id="default", name="", email="")
         db.add(p); db.commit()
@@ -35,11 +35,10 @@ def get_default_profile(db: Session = Depends(get_db)):
 
 @router.put("/default", response_model=ProfileOut)
 def upsert_default_profile(body: ProfileIn, db: Session = Depends(get_db)):
-    p = db.query(Profile).get("default")
+    p = db.get(Profile, "default")
     if not p:
         p = Profile(id="default")
     for k, v in body.model_dump().items():
         setattr(p, k, v)
     db.add(p); db.commit()
     return get_default_profile(db)
-

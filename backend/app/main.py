@@ -25,7 +25,7 @@ from .schemas import (
     JobAnalysisRequest, JobAnalysisResponse, ResumeTailoringRequest, ResumeTailoringResponse,
     ApplicationOutcomeUpdate, AIInteractionFeedback
 )
-from .ai_services import get_ai_service
+from .ai_services import get_ai_service, get_form_filler_service
 from .ingest import fetch_readme, parse_jobs_from_readme
 from .ats import detect_ats
 from .tailor import extract_keywords, make_diff_html
@@ -156,7 +156,7 @@ def list_jobs(db: Session = Depends(get_db)):
 
 @app.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: str, db: Session = Depends(get_db)):
-    j = db.query(Job).get(job_id)
+    j = db.get(Job, job_id)
     if not j: raise HTTPException(404, "job not found")
     return JobOut(id=j.id, company=j.company, role=j.role, location=j.location,
                   apply_url=j.apply_url, date_posted=j.date_posted, ats=j.ats, status=j.status)
@@ -171,7 +171,7 @@ def latest_tailor(job_id: str, db: Session = Depends(get_db)):
 # Tailor (MVP keywords + diff preview)
 @app.post("/jobs/{job_id}/tailor", response_model=TailorResultOut)
 def tailor(job_id: str, profileId: str = "default", db: Session = Depends(get_db)):
-    j = db.query(Job).get(job_id)
+    j = db.get(Job, job_id)
     if not j: raise HTTPException(404, "job not found")
 
     # Fetch JD text (MVP: just GET and strip tags)
@@ -188,7 +188,7 @@ def tailor(job_id: str, profileId: str = "default", db: Session = Depends(get_db
         pass
 
     kws = extract_keywords(jd_text, top_k=10)
-    prof = db.query(Profile).get(profileId)
+    prof = db.get(Profile, profileId)
     base_resume_text = ""  # If you want, fetch & parse PDF here
     diff_html = make_diff_html(base_resume_text, kws)
     tr = TailorResult(job_id=job_id, keywords=kws, diff_html=diff_html, pdf_url=None)
@@ -201,7 +201,7 @@ def tailor(job_id: str, profileId: str = "default", db: Session = Depends(get_db
 @app.post("/jobs/{job_id}/apply")
 async def apply(job_id: str, profileId: str = "default", db: Session = Depends(get_db)):
     """Mark job as applied - will be called by Chrome extension"""
-    j = db.query(Job).get(job_id)
+    j = db.get(Job, job_id)
     if not j: raise HTTPException(404, "job not found")
 
     j.status = "applied"
@@ -213,7 +213,7 @@ async def apply(job_id: str, profileId: str = "default", db: Session = Depends(g
 @app.post("/jobs/{job_id}/oneclick")
 async def oneclick(job_id: str, db: Session = Depends(get_db)):
     """AI-powered one-click tailor and apply for Chrome extension"""
-    j = db.query(Job).get(job_id)
+    j = db.get(Job, job_id)
     if not j:
         raise HTTPException(404, "job not found")
     
@@ -235,7 +235,7 @@ async def oneclick(job_id: str, db: Session = Depends(get_db)):
 def import_tailored_json(job_id: str,
                          body: dict = Body(...),  # expects {"keywords":[...], "resume":{...}}
                          db: Session = Depends(get_db)):
-    j = db.query(Job).get(job_id)
+    j = db.get(Job, job_id)
     if not j: raise HTTPException(404, "job not found")
 
     # validate minimal structure
@@ -405,7 +405,7 @@ async def analyze_job_description(request: JobAnalysisRequest, db: Session = Dep
     """AI-powered job description analysis"""
     try:
         # Get or create default user profile so the endpoint never hard-fails
-        profile = db.query(Profile).get("default")
+        profile = db.get(Profile, "default")
         if not profile:
             profile = Profile(id="default", name="", email="")
             db.add(profile)
@@ -509,11 +509,11 @@ async def tailor_resume(request: ResumeTailoringRequest, db: Session = Depends(g
     """AI-powered resume tailoring"""
     try:
         # Get job and user profile
-        job = db.query(Job).get(request.job_id)
+        job = db.get(Job, request.job_id)
         if not job:
             raise HTTPException(404, "Job not found")
             
-        profile = db.query(Profile).get("default")
+        profile = db.get(Profile, "default")
         if not profile or not profile.base_resume_url:
             raise HTTPException(400, "Please upload a base resume first")
         
@@ -592,7 +592,7 @@ async def generate_ats_preview(job_id: str, db: Session = Depends(get_db)):
     if not tailor_result or not tailor_result.ai_analysis:
         raise HTTPException(404, "No tailored resume found for this job")
         
-    profile = db.query(Profile).get("default")
+    profile = db.get(Profile, "default")
     ai_service = get_ai_service(
             user_api_key=profile.ai_api_key if profile else None,
             model=(profile.preferred_ai_model if profile and profile.preferred_ai_model else os.getenv("DEFAULT_AI_MODEL", "deepseek-reasoner"))
@@ -627,7 +627,7 @@ def bootstrap_jake_resume(db: Session = Depends(get_db)):
     out_path = os.path.join(files_dir, "resume_jake.pdf")
     render_pdf_from_json(resume_json, out_path)
     # Set base resume URL
-    p = db.query(Profile).get("default") or Profile(id="default", name="", email="")
+    p = db.get(Profile, "default") or Profile(id="default", name="", email="")
     db.add(p)
     p.base_resume_url = f"/files/{os.path.basename(out_path)}"
     db.commit()
@@ -663,7 +663,7 @@ async def track_application_outcome(outcome: ApplicationOutcomeUpdate, db: Sessi
             db.add(outcome_record)
         
         # Update job status
-        job = db.query(Job).get(outcome.job_id)
+        job = db.get(Job, outcome.job_id)
         if job:
             job.status = outcome.status
         
@@ -677,7 +677,7 @@ async def track_application_outcome(outcome: ApplicationOutcomeUpdate, db: Sessi
 async def submit_ai_feedback(feedback: AIInteractionFeedback, db: Session = Depends(get_db)):
     """Submit feedback on AI interaction quality"""
     try:
-        interaction = db.query(AIInteraction).get(feedback.interaction_id)
+        interaction = db.get(AIInteraction, feedback.interaction_id)
         if not interaction:
             raise HTTPException(404, "AI interaction not found")
         
@@ -689,10 +689,224 @@ async def submit_ai_feedback(feedback: AIInteractionFeedback, db: Session = Depe
     except Exception as e:
         raise HTTPException(500, f"Failed to record feedback: {str(e)}")
 
+# ----- OCR-Powered Form Filling Endpoints -----
+
+@app.post("/ai/analyze-form")
+async def analyze_form_fields(request: dict = Body(...), db: Session = Depends(get_db)):
+    """AI-powered form field analysis for Chrome extension using HTML parsing"""
+    try:
+        page_html = request.get("page_html", "")
+        job_context = request.get("job_context", {})
+        
+        if not page_html:
+            raise HTTPException(400, "Page HTML is required")
+        
+        # Get user profile for API key
+        profile = db.get(Profile, "default")
+        
+        # Get AI form filler service (uses GPT-4.1-nano)
+        form_filler_service = get_form_filler_service(
+            user_api_key=profile.ai_api_key if profile else None
+        )
+        
+        # Analyze form fields
+        analysis = await form_filler_service.analyze_form_fields(page_html, job_context)
+        
+        return {
+            "success": True,
+            "analysis": analysis,
+            "method": "html_analysis"
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Form analysis failed: {str(e)}")
+
+@app.post("/ai/vision-form-analysis")
+async def vision_form_analysis(request: dict = Body(...), db: Session = Depends(get_db)):
+    """OCR-powered form analysis using GPT-4o vision capabilities"""
+    try:
+        screenshot_base64 = request.get("screenshot_base64", "")
+        job_context = request.get("job_context", {})
+        
+        if not screenshot_base64:
+            raise HTTPException(400, "Screenshot is required")
+        
+        # Get user profile for API key
+        profile = db.get(Profile, "default")
+        
+        # Get AI form filler service (uses GPT-4o vision)
+        form_filler_service = get_form_filler_service(
+            user_api_key=profile.ai_api_key if profile else None
+        )
+        
+        # Analyze form with OCR-like vision
+        analysis = await form_filler_service.analyze_form_with_vision(
+            screenshot_base64, job_context
+        )
+        
+        return {
+            "success": True,
+            "analysis": analysis,
+            "method": "vision_ocr"
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Vision form analysis failed: {str(e)}")
+
+@app.post("/ai/generate-form-responses")
+async def generate_form_responses(request: dict = Body(...), db: Session = Depends(get_db)):
+    """AI-powered form response generation for Chrome extension"""
+    try:
+        form_fields = request.get("form_fields", [])
+        job_context = request.get("job_context", {})
+        
+        if not form_fields:
+            raise HTTPException(400, "Form fields are required")
+        
+        # Get user profile and resume data
+        profile = db.get(Profile, "default")
+        if not profile:
+            raise HTTPException(400, "User profile not found")
+        
+        # Prepare resume data from profile
+        resume_data = {
+            "name": profile.name or "",
+            "contact": {
+                "email": profile.email or "",
+                "phone": profile.phone or "",
+                "location": "",
+                "linkedin": profile.links.get("linkedin", "") if profile.links else "",
+                "github": profile.links.get("github", "") if profile.links else ""
+            },
+            "summary": "",
+            "skills": profile.skills or [],
+            "experience": [],
+            "education": [{
+                "school": profile.school or "",
+                "degree": "",
+                "graduation": profile.grad_date or ""
+            }] if profile.school else []
+        }
+        
+        # Get AI form filler service (uses GPT-4.1-nano)
+        form_filler_service = get_form_filler_service(
+            user_api_key=profile.ai_api_key
+        )
+        
+        # Generate form responses
+        responses = await form_filler_service.generate_form_responses(
+            form_fields, resume_data, job_context
+        )
+        
+        return {
+            "success": True,
+            "responses": responses
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Form response generation failed: {str(e)}")
+
+@app.post("/ai/smart-fill-form")
+async def smart_fill_form(request: dict = Body(...), db: Session = Depends(get_db)):
+    """Hybrid OCR + HTML form filling with intelligent method selection"""
+    try:
+        page_html = request.get("page_html", "")
+        screenshot_base64 = request.get("screenshot_base64", "")
+        job_context = request.get("job_context", {})
+        force_vision = request.get("force_vision", False)
+        
+        if not page_html and not screenshot_base64:
+            raise HTTPException(400, "Either page HTML or screenshot is required")
+        
+        # Get user profile
+        profile = db.get(Profile, "default")
+        if not profile:
+            raise HTTPException(400, "User profile not found")
+        
+        # Get AI form filler service
+        form_filler_service = get_form_filler_service(
+            user_api_key=profile.ai_api_key
+        )
+        
+        # Prepare resume data
+        resume_data = {
+            "name": profile.name or "",
+            "contact": {
+                "email": profile.email or "",
+                "phone": profile.phone or "",
+                "location": "",
+                "linkedin": profile.links.get("linkedin", "") if profile.links else "",
+                "github": profile.links.get("github", "") if profile.links else ""
+            },
+            "summary": f"Computer Science student at {profile.school or 'University'} seeking internship opportunities.",
+            "skills": profile.skills or [],
+            "experience": [],
+            "education": [{
+                "school": profile.school or "",
+                "degree": "Bachelor of Science in Computer Science",
+                "graduation": profile.grad_date or ""
+            }] if profile.school else []
+        }
+        
+        analysis = None
+        responses = None
+        method_used = "html"
+        
+        # Step 1: Try HTML analysis first (unless force_vision is True)
+        if page_html and not force_vision:
+            try:
+                analysis = await form_filler_service.analyze_form_fields(page_html, job_context)
+                
+                # Check if HTML analysis found sufficient fields
+                if analysis.get("total_fields", 0) >= 3:  # Reasonable threshold
+                    responses = await form_filler_service.generate_form_responses(
+                        analysis.get("detected_fields", []), resume_data, job_context
+                    )
+                    method_used = "html"
+                else:
+                    # HTML analysis didn't find enough fields, try vision
+                    analysis = None
+                    
+            except Exception as e:
+                logger.warning(f"HTML analysis failed, falling back to vision: {e}")
+                analysis = None
+        
+        # Step 2: Use OCR vision analysis if HTML failed or was insufficient
+        if not analysis and screenshot_base64:
+            try:
+                analysis = await form_filler_service.analyze_form_with_vision(
+                    screenshot_base64, job_context
+                )
+                responses = await form_filler_service.generate_responses_from_vision(
+                    analysis, resume_data, job_context
+                )
+                method_used = "vision_ocr"
+                
+            except Exception as e:
+                logger.error(f"Vision OCR analysis also failed: {e}")
+                raise HTTPException(500, f"Both HTML and OCR vision analysis failed: {str(e)}")
+        
+        if not analysis or not responses:
+            raise HTTPException(500, "Failed to analyze form with both HTML and OCR vision methods")
+        
+        return {
+            "success": True,
+            "method_used": method_used,
+            "analysis": analysis,
+            "responses": responses,
+            "fill_instructions": responses.get("special_instructions", []),
+            "confidence_score": responses.get("confidence_score", 0.0)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Smart form filling failed: {str(e)}")
+
 # ----- Profile -----
 @app.get("/profile", response_model=ProfileOut)
 def get_profile(db: Session = Depends(get_db)):
-    p = db.query(Profile).get("default")
+    p = db.get(Profile, "default")
     if not p:
         p = Profile(id="default", name="", email="")
         db.add(p); db.commit()
@@ -702,7 +916,7 @@ def get_profile(db: Session = Depends(get_db)):
 
 @app.put("/profile", response_model=ProfileOut)
 def put_profile(body: ProfileIn, db: Session = Depends(get_db)):
-    p = db.query(Profile).get("default")
+    p = db.get(Profile, "default")
     if not p: p = Profile(id="default")
     for k, v in body.model_dump().items():
         setattr(p, k, v)
